@@ -17,6 +17,19 @@ export type DiscountApplicationSummary = {
   kind: "AUTOMATIC" | "CODE" | "MANUAL" | "SCRIPT" | "OTHER";
 };
 
+/**
+ * Every line item on the order (not just returnable ones) with both its
+ * original and discounted unit price -- the discount reallocation engine
+ * needs the full order context to know what's being "kept" after a return.
+ */
+export type OrderLineItemForDiscount = {
+  lineItemId: string;
+  productId: string | null;
+  quantity: number;
+  originalUnitPrice: string;
+  discountedUnitPrice: string;
+};
+
 export type OrderLookupResult = {
   id: string;
   name: string;
@@ -25,6 +38,7 @@ export type OrderLookupResult = {
   createdAt: string;
   discountApplications: DiscountApplicationSummary[];
   returnableItems: ReturnableItem[];
+  allLineItems: OrderLineItemForDiscount[];
 };
 
 const ORDER_SEARCH_QUERY = `#graphql
@@ -53,6 +67,25 @@ const ORDER_SEARCH_QUERY = `#graphql
             }
             ... on ScriptDiscountApplication {
               title
+            }
+          }
+        }
+        lineItems(first: 100) {
+          nodes {
+            id
+            quantity
+            product {
+              id
+            }
+            originalUnitPriceSet {
+              shopMoney {
+                amount
+              }
+            }
+            discountedUnitPriceSet {
+              shopMoney {
+                amount
+              }
             }
           }
         }
@@ -172,6 +205,14 @@ export async function findOrderForReturnLookup(
 
   const returnableItems = await getReturnableItems(admin, order.id);
 
+  const allLineItems: OrderLineItemForDiscount[] = (order.lineItems?.nodes ?? []).map((node: any) => ({
+    lineItemId: node.id,
+    productId: node.product?.id ?? null,
+    quantity: node.quantity,
+    originalUnitPrice: node.originalUnitPriceSet?.shopMoney?.amount ?? "0.00",
+    discountedUnitPrice: node.discountedUnitPriceSet?.shopMoney?.amount ?? "0.00",
+  }));
+
   return {
     id: order.id,
     name: order.name,
@@ -180,6 +221,7 @@ export async function findOrderForReturnLookup(
     createdAt: order.createdAt,
     discountApplications,
     returnableItems,
+    allLineItems,
   };
 }
 

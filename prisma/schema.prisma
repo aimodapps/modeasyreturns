@@ -91,22 +91,63 @@ enum ReturnStatus {
   CANCELLED
 }
 
-model ReturnRequest {
-  id             String       @id @default(cuid())
-  shopDomain     String
-  orderId        String
-  orderName      String
-  customerEmail  String?
-  customerPhone  String?
-  status         ReturnStatus @default(DRAFT)
-  orderSnapshot  Json
-  createdAt      DateTime     @default(now())
-  updatedAt      DateTime     @updatedAt
+enum ShippingMethod {
+  OWN_CARRIER
+  RETURN_LABEL
+}
 
-  lineItems ReturnRequestLineItem[]
-  photos    PhotoUpload[]
+model ReturnRequest {
+  id                 String          @id @default(cuid())
+  shopDomain         String
+  orderId            String
+  orderName          String
+  customerEmail      String?
+  customerPhone      String?
+  status             ReturnStatus    @default(DRAFT)
+  orderSnapshot      Json
+  shippingMethod     ShippingMethod?
+  shippingFeeAmount  Decimal?        @db.Decimal(10, 2)
+  submittedAt        DateTime?
+  adminNote          String?
+  decidedAt          DateTime?
+  decidedByStaff     String?
+  shopifyReturnId    String?
+  shopifyReturnName  String?
+  shopifyRefundId    String?
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
+
+  lineItems     ReturnRequestLineItem[]
+  photos        PhotoUpload[]
+  notifications AdminNotificationLog[]
 
   @@index([shopDomain, status])
+}
+
+enum NotificationType {
+  RETURN_INITIATED
+  RETURN_APPROVED
+  RETURN_DENIED
+}
+
+enum NotificationStatus {
+  SENT
+  FAILED
+  SKIPPED
+}
+
+model AdminNotificationLog {
+  id                String             @id @default(cuid())
+  returnRequestId   String
+  type              NotificationType
+  recipientEmail    String
+  provider          String             @default("resend")
+  providerMessageId String?
+  status            NotificationStatus @default(SENT)
+  errorMessage      String?
+  sentAt            DateTime           @default(now())
+
+  returnRequest ReturnRequest @relation(fields: [returnRequestId], references: [id], onDelete: Cascade)
 }
 
 model PhotoUpload {
@@ -135,9 +176,96 @@ model ReturnRequestLineItem {
   createdAt            DateTime @default(now())
   updatedAt            DateTime @updatedAt
 
-  returnRequest   ReturnRequest    @relation(fields: [returnRequestId], references: [id], onDelete: Cascade)
-  conditionOption ConditionOption? @relation(fields: [conditionOptionId], references: [id])
-  reason          ReturnReason?    @relation(fields: [reasonId], references: [id])
+  returnRequest     ReturnRequest      @relation(fields: [returnRequestId], references: [id], onDelete: Cascade)
+  conditionOption   ConditionOption?   @relation(fields: [conditionOptionId], references: [id])
+  reason            ReturnReason?      @relation(fields: [reasonId], references: [id])
+  exchangeSelection ExchangeSelection?
 
   @@unique([returnRequestId, fulfillmentLineItemId])
+}
+
+model ExchangeUpsellProduct {
+  id               String   @id @default(cuid())
+  shopDomain       String
+  shopifyProductId String
+  shopifyVariantId String?
+  sortOrder        Int      @default(0)
+  isActive         Boolean  @default(true)
+  createdAt        DateTime @default(now())
+}
+
+enum PriceDiffDirection {
+  CHARGE
+  REFUND
+  NONE
+}
+
+model ExchangeSelection {
+  id                       String             @id @default(cuid())
+  returnRequestLineItemId  String             @unique
+  targetProductId          String
+  targetVariantId          String
+  targetTitle              String
+  targetVariantTitle       String?
+  targetImageUrl           String?
+  targetUnitPrice          Decimal            @db.Decimal(10, 2)
+  currencyCode             String
+  priceDifference          Decimal            @db.Decimal(10, 2)
+  direction                PriceDiffDirection
+  createdAt                DateTime           @default(now())
+  updatedAt                DateTime           @updatedAt
+
+  returnRequestLineItem ReturnRequestLineItem @relation(fields: [returnRequestLineItemId], references: [id], onDelete: Cascade)
+}
+
+enum DiscountRuleType {
+  ORDER_PERCENTAGE
+  ORDER_FIXED_AMOUNT
+  QTY_BREAK_PERCENTAGE
+  QTY_BREAK_FIXED_AMOUNT
+}
+
+enum DiscountScope {
+  ALL_ITEMS
+  SPECIFIC_PRODUCTS
+}
+
+model DiscountRule {
+  id                 String           @id @default(cuid())
+  shopDomain         String
+  discountTitleMatch String
+  discountCode       String?
+  type               DiscountRuleType
+  minQuantity        Int?
+  minAmount          Decimal?         @db.Decimal(10, 2)
+  discountValue      Decimal          @db.Decimal(10, 2)
+  appliesTo          DiscountScope    @default(ALL_ITEMS)
+  scopeProductIds    Json?
+  isActive           Boolean          @default(true)
+  notes              String?
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+}
+
+enum FeeType {
+  PERCENTAGE
+  FIXED_AMOUNT
+}
+
+model RestockingFeeConfig {
+  id         String   @id @default(cuid())
+  shopDomain String   @unique
+  feeType    FeeType  @default(PERCENTAGE)
+  value      Decimal  @db.Decimal(10, 2)
+  isActive   Boolean  @default(true)
+  updatedAt  DateTime @updatedAt
+}
+
+model ReturnLabelFeeConfig {
+  id            String   @id @default(cuid())
+  shopDomain    String   @unique
+  amountPerItem Decimal  @db.Decimal(10, 2) @default(5.99)
+  currency      String   @default("USD")
+  isActive      Boolean  @default(true)
+  updatedAt     DateTime @updatedAt
 }

@@ -73,6 +73,7 @@ async function handleAction(request: Request) {
     phone,
     items: result.items,
     discountApplications: result.discountApplications,
+    allLineItems: result.allLineItems,
   });
 
   return redirect(`/apps/returns/r/${draft.id}/items`);

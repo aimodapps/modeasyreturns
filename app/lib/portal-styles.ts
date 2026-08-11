@@ -128,4 +128,7 @@ export const PORTAL_ANIMATION_CSS = `
   @media (prefers-reduced-motion: reduce) {
     .portal-card { animation: none; }
   }
+  @media (max-width: 480px) {
+    .portal-card { padding: 20px !important; border-radius: 12px !important; }
+  }
 `;

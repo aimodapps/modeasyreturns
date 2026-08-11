@@ -24,8 +24,13 @@ export default function App() {
         <Link to="/app" rel="home">
           Home
         </Link>
+        <Link to="/app/returns">Return requests</Link>
+        <Link to="/app/settings/general">General settings</Link>
         <Link to="/app/settings/conditions">Item conditions</Link>
         <Link to="/app/settings/reasons">Return reasons</Link>
+        <Link to="/app/settings/exchange-products">Exchange upsells</Link>
+        <Link to="/app/settings/fees">Shipping & fees</Link>
+        <Link to="/app/settings/discount-rules">Discount rules</Link>
       </NavMenu>
       <Outlet />
     </AppProvider>

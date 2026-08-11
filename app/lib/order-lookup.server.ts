@@ -4,6 +4,7 @@ import {
   findOrderForReturnLookup,
   type DiscountApplicationSummary,
   type ReturnableItem,
+  type OrderLineItemForDiscount,
 } from "./shopify-admin.server";
 
 export const GENERIC_NOT_FOUND_MESSAGE =
@@ -15,6 +16,7 @@ export type OrderLookupResponse =
       order: { id: string; name: string };
       items: ReturnableItem[];
       discountApplications: DiscountApplicationSummary[];
+      allLineItems: OrderLineItemForDiscount[];
     }
   | { eligible: false; error: string };
 
@@ -53,12 +55,14 @@ export async function performOrderLookup(
     order: { id: order.id, name: order.name },
     items: order.returnableItems,
     discountApplications: order.discountApplications,
+    allLineItems: order.allLineItems,
   };
 }
 
 export type OrderSnapshot = {
   items: ReturnableItem[];
   discountApplications: DiscountApplicationSummary[];
+  allLineItems: OrderLineItemForDiscount[];
 };
 
 export async function createDraftReturnRequest(
@@ -70,6 +74,7 @@ export async function createDraftReturnRequest(
     phone,
     items,
     discountApplications,
+    allLineItems,
   }: {
     orderId: string;
     orderName: string;
@@ -77,9 +82,10 @@ export async function createDraftReturnRequest(
     phone?: string;
     items: ReturnableItem[];
     discountApplications: DiscountApplicationSummary[];
+    allLineItems: OrderLineItemForDiscount[];
   },
 ) {
-  const snapshot: OrderSnapshot = { items, discountApplications };
+  const snapshot: OrderSnapshot = { items, discountApplications, allLineItems };
   return db.returnRequest.create({
     data: {
       shopDomain,

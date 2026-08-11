@@ -50,7 +50,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     data: { reasonId: reason.id },
   });
 
-  return redirect(`/apps/returns/r/${returnRequest.id}/summary`);
+  return redirect(`/apps/returns/r/${returnRequest.id}/exchange`);
 };
 
 export default function ReasonStep() {
