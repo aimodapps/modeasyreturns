@@ -96,17 +96,28 @@ enum ShippingMethod {
   RETURN_LABEL
 }
 
+// Only meaningful once status = APPROVED; tracks the post-approval
+// physical-return / exchange-fulfillment journey on the *same* Shopify
+// order (see ExchangeSelection/exchangeLineItems -- there is no separate
+// draft order anymore).
+enum ReturnLifecycleStage {
+  AWAITING_RECEIPT // Return/Exchange Accepted -- waiting for the item to be received & inspected
+  BALANCE_DUE // Received & inspected; exchange created a balance, invoice not yet sent
+  INVOICE_SENT // Invoice sent (Awaiting Payment)
+  COMPLETED // Refund issued / no balance due / fully resolved
+}
+
 model ReturnRequest {
-  id                 String          @id @default(cuid())
+  id                 String                @id @default(cuid())
   shopDomain         String
   orderId            String
   orderName          String
   customerEmail      String?
   customerPhone      String?
-  status             ReturnStatus    @default(DRAFT)
+  status             ReturnStatus          @default(DRAFT)
   orderSnapshot      Json
   shippingMethod     ShippingMethod?
-  shippingFeeAmount  Decimal?        @db.Decimal(10, 2)
+  shippingFeeAmount  Decimal?              @db.Decimal(10, 2)
   submittedAt        DateTime?
   adminNote          String?
   decidedAt          DateTime?
@@ -114,8 +125,14 @@ model ReturnRequest {
   shopifyReturnId    String?
   shopifyReturnName  String?
   shopifyRefundId    String?
-  createdAt          DateTime        @default(now())
-  updatedAt          DateTime        @updatedAt
+  lifecycleStage     ReturnLifecycleStage?
+  receivedAt         DateTime?
+  invoiceSentAt      DateTime?
+  refundIssuedAmount Decimal?              @db.Decimal(10, 2)
+  balanceDueAmount   Decimal?              @db.Decimal(10, 2)
+  balanceDueCurrency String?
+  createdAt          DateTime              @default(now())
+  updatedAt          DateTime              @updatedAt
 
   lineItems     ReturnRequestLineItem[]
   photos        PhotoUpload[]
@@ -128,6 +145,7 @@ enum NotificationType {
   RETURN_INITIATED
   RETURN_APPROVED
   RETURN_DENIED
+  RETURN_RECEIVED
 }
 
 enum NotificationStatus {
@@ -201,19 +219,19 @@ enum PriceDiffDirection {
 }
 
 model ExchangeSelection {
-  id                       String             @id @default(cuid())
-  returnRequestLineItemId  String             @unique
-  targetProductId          String
-  targetVariantId          String
-  targetTitle              String
-  targetVariantTitle       String?
-  targetImageUrl           String?
-  targetUnitPrice          Decimal            @db.Decimal(10, 2)
-  currencyCode             String
-  priceDifference          Decimal            @db.Decimal(10, 2)
-  direction                PriceDiffDirection
-  createdAt                DateTime           @default(now())
-  updatedAt                DateTime           @updatedAt
+  id                      String             @id @default(cuid())
+  returnRequestLineItemId String             @unique
+  targetProductId         String
+  targetVariantId         String
+  targetTitle             String
+  targetVariantTitle      String?
+  targetImageUrl          String?
+  targetUnitPrice         Decimal            @db.Decimal(10, 2)
+  currencyCode            String
+  priceDifference         Decimal            @db.Decimal(10, 2)
+  direction               PriceDiffDirection
+  createdAt               DateTime           @default(now())
+  updatedAt               DateTime           @updatedAt
 
   returnRequestLineItem ReturnRequestLineItem @relation(fields: [returnRequestLineItemId], references: [id], onDelete: Cascade)
 }

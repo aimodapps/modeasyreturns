@@ -12,7 +12,7 @@ async function sendAndLog({
   html,
 }: {
   returnRequestId: string;
-  type: "RETURN_INITIATED" | "RETURN_APPROVED" | "RETURN_DENIED";
+  type: "RETURN_INITIATED" | "RETURN_APPROVED" | "RETURN_DENIED" | "RETURN_RECEIVED";
   to: string;
   subject: string;
   html: string;
@@ -100,7 +100,46 @@ export async function sendReturnApprovedEmail({
     subject: `Your return for order ${orderName} has been approved`,
     html: `
       <h2>Your return was approved</h2>
-      <p>Good news -- your return request for order <strong>${orderName}</strong> has been approved and is being processed.</p>
+      <p>Good news -- your return request for order <strong>${orderName}</strong> has been approved. Please ship the item(s) back to us; we'll email you again once we've received and inspected them.</p>
+    `,
+  });
+}
+
+export async function sendReturnReceivedEmail({
+  returnRequestId,
+  customerEmail,
+  orderName,
+  refundIssuedAmount,
+  currencyCode,
+  balanceDueAmount,
+}: {
+  returnRequestId: string;
+  customerEmail: string;
+  orderName: string;
+  refundIssuedAmount: number | null;
+  currencyCode: string | null;
+  balanceDueAmount: number | null;
+}) {
+  const parts: string[] = [];
+  if (refundIssuedAmount && refundIssuedAmount > 0) {
+    parts.push(`<p>We've issued a refund of <strong>${refundIssuedAmount.toFixed(2)} ${currencyCode ?? ""}</strong>.</p>`);
+  }
+  if (balanceDueAmount && balanceDueAmount > 0) {
+    parts.push(`<p>Your exchange has a remaining balance of <strong>${balanceDueAmount.toFixed(2)} ${currencyCode ?? ""}</strong> -- you'll receive a separate invoice email with a payment link shortly.</p>`);
+  }
+  if (parts.length === 0) {
+    parts.push("<p>Your exchange replacement is on its way -- no further payment is needed.</p>");
+  }
+
+  await sendAndLog({
+    returnRequestId,
+    type: "RETURN_RECEIVED",
+    to: customerEmail,
+    subject: `We've received your return for order ${orderName}`,
+    html: `
+      <h2>Your return has been received & inspected</h2>
+      <p>We've received and inspected the item(s) you returned for order <strong>${orderName}</strong>.</p>
+      ${parts.join("")}
     `,
   });
 }

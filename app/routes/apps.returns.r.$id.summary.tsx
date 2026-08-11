@@ -115,26 +115,130 @@ function computeNet(
   return netCents;
 }
 
-export default function SummaryStep() {
-  const { returnRequest, refundBreakdown } = useLoaderData<typeof loader>();
-  const navigation = useNavigation();
-  const isSubmitting = navigation.state === "submitting";
+const CUSTOMER_STAGE_STEPS = [
+  { key: "ACCEPTED", label: "Return/Exchange Accepted" },
+  { key: "AWAITING_RECEIPT", label: "Waiting for return to be received and inspected" },
+  { key: "INVOICE_SENT", label: "Invoice sent (Awaiting Payment)" },
+  { key: "COMPLETED", label: "Completed" },
+];
 
-  if (returnRequest.status !== "DRAFT") {
+function StatusScreen({
+  returnRequest,
+}: {
+  returnRequest: {
+    id: string;
+    orderName: string;
+    status: string;
+    lifecycleStage: string | null;
+    adminNote: string | null;
+    refundIssuedAmount: unknown;
+    balanceDueAmount: unknown;
+    balanceDueCurrency: string | null;
+    lineItems: Array<{ currencyCode: string }>;
+  };
+}) {
+  const currency = returnRequest.lineItems[0]?.currencyCode ?? "";
+
+  if (returnRequest.status === "PENDING_REVIEW") {
     return (
       <div style={styles.page}>
         <style>{PORTAL_ANIMATION_CSS}</style>
         <div style={styles.card} className="portal-card">
           <h1 style={styles.heading}>Return request submitted</h1>
-          <p style={styles.subheading}>
-            We've notified our team. You'll hear back once it's reviewed.
-          </p>
+          <p style={styles.subheading}>We've notified our team. You'll hear back once it's reviewed.</p>
           <p style={{ fontSize: 14 }}>
             Reference number: <strong>{returnRequest.id.slice(-8).toUpperCase()}</strong>
           </p>
         </div>
       </div>
     );
+  }
+
+  if (returnRequest.status === "DENIED") {
+    return (
+      <div style={styles.page}>
+        <style>{PORTAL_ANIMATION_CSS}</style>
+        <div style={styles.card} className="portal-card">
+          <h1 style={styles.heading}>Return request not approved</h1>
+          <p style={styles.subheading}>
+            {returnRequest.adminNote || "We're sorry, we're unable to approve this return request."}
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  // APPROVED -- walk the customer through the same lifecycle the admin sees.
+  const showInvoiceStep =
+    returnRequest.balanceDueAmount != null ||
+    returnRequest.lifecycleStage === "BALANCE_DUE" ||
+    returnRequest.lifecycleStage === "INVOICE_SENT";
+  const steps = CUSTOMER_STAGE_STEPS.filter((s) => s.key !== "INVOICE_SENT" || showInvoiceStep);
+  const order = ["AWAITING_RECEIPT", "BALANCE_DUE", "INVOICE_SENT", "COMPLETED"];
+  const currentIndex = returnRequest.lifecycleStage ? order.indexOf(returnRequest.lifecycleStage) : -1;
+
+  return (
+    <div style={styles.page}>
+      <style>{PORTAL_ANIMATION_CSS}</style>
+      <div style={styles.card} className="portal-card">
+        <p style={styles.breadcrumb}>Order {returnRequest.orderName}</p>
+        <h1 style={styles.heading}>Your return status</h1>
+        <p style={{ fontSize: 14, marginBottom: 16 }}>
+          Reference number: <strong>{returnRequest.id.slice(-8).toUpperCase()}</strong>
+        </p>
+
+        <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "flex", flexDirection: "column", gap: 10 }}>
+          {steps.map((step) => {
+            const stepIndex = step.key === "ACCEPTED" ? 0 : step.key === "INVOICE_SENT" ? order.indexOf("BALANCE_DUE") : order.indexOf(step.key);
+            const isCurrent =
+              step.key === "ACCEPTED"
+                ? currentIndex === -1
+                : step.key === "INVOICE_SENT"
+                  ? returnRequest.lifecycleStage === "BALANCE_DUE" || returnRequest.lifecycleStage === "INVOICE_SENT"
+                  : returnRequest.lifecycleStage === step.key;
+            const isDone = step.key === "ACCEPTED" ? currentIndex >= 0 : currentIndex > stepIndex;
+            return (
+              <li key={step.key} style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <span
+                  style={{
+                    width: 10,
+                    height: 10,
+                    borderRadius: "50%",
+                    flexShrink: 0,
+                    background: isDone ? "#1a7f37" : isCurrent ? "#b38600" : "#d0d0d0",
+                  }}
+                />
+                <span style={{ fontSize: 14, fontWeight: isCurrent ? 700 : 400, color: isCurrent ? "#1a1a1a" : "#6b6b6b" }}>
+                  {step.label}
+                </span>
+              </li>
+            );
+          })}
+        </ul>
+
+        {returnRequest.balanceDueAmount != null && (
+          <p style={{ fontSize: 14, marginTop: 16, fontWeight: 600 }}>
+            You owe: {Number(returnRequest.balanceDueAmount).toFixed(2)} {returnRequest.balanceDueCurrency}
+            {returnRequest.lifecycleStage === "INVOICE_SENT" && " — check your email for a payment link"}
+          </p>
+        )}
+        {returnRequest.refundIssuedAmount != null && (
+          <p style={{ fontSize: 14, marginTop: 8 }}>
+            Refund issued: {Number(returnRequest.refundIssuedAmount).toFixed(2)} {currency}
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+export default function SummaryStep() {
+  const { returnRequest, refundBreakdown } = useLoaderData<typeof loader>();
+  const navigation = useNavigation();
+  const isSubmitting = navigation.state === "submitting";
+
+  if (returnRequest.status !== "DRAFT") {
+    return <StatusScreen returnRequest={returnRequest} />;
   }
 
   const netCents = computeNet(returnRequest, refundBreakdown);

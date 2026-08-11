@@ -13,6 +13,13 @@ const STATUS_TONE: Record<string, "attention" | "success" | "critical" | undefin
   DRAFT: undefined,
 };
 
+const STAGE_LABELS: Record<string, string> = {
+  AWAITING_RECEIPT: "Awaiting receipt",
+  BALANCE_DUE: "Balance due",
+  INVOICE_SENT: "Invoice sent",
+  COMPLETED: "Completed",
+};
+
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   const requests = await db.returnRequest.findMany({
@@ -39,7 +46,11 @@ export default function ReturnsQueue() {
       <IndexTable.Cell>{request.customerEmail ?? "—"}</IndexTable.Cell>
       <IndexTable.Cell>{request.lineItems.length} item(s)</IndexTable.Cell>
       <IndexTable.Cell>
-        <Badge tone={STATUS_TONE[request.status]}>{request.status.replace("_", " ")}</Badge>
+        <Badge tone={STATUS_TONE[request.status]}>
+          {request.status === "APPROVED" && request.lifecycleStage
+            ? STAGE_LABELS[request.lifecycleStage]
+            : request.status.replace("_", " ")}
+        </Badge>
       </IndexTable.Cell>
       <IndexTable.Cell>
         {request.submittedAt ? new Date(request.submittedAt).toLocaleString() : "—"}
