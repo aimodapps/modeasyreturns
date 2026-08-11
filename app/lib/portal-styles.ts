@@ -76,4 +76,56 @@ export const portalStyles: Record<string, CSSProperties> = {
   optionLabel: { display: "flex", gap: 10, alignItems: "flex-start", fontSize: 15, fontWeight: 600, color: "#1a1a1a" },
   optionMessage: { fontSize: 13, color: "#6b6b6b", marginLeft: 24, lineHeight: 1.5 },
   breadcrumb: { fontSize: 12, color: "#999", margin: "0 0 4px", textTransform: "uppercase", letterSpacing: 0.5 },
+  productCard: {
+    display: "flex",
+    alignItems: "center",
+    gap: 14,
+    padding: 12,
+    borderRadius: 12,
+    border: "1px solid #e2e2e2",
+  },
+  productThumb: {
+    width: 56,
+    height: 56,
+    borderRadius: 8,
+    objectFit: "cover",
+    flexShrink: 0,
+    background: "#f2f2f2",
+  },
+  productThumbPlaceholder: {
+    width: 56,
+    height: 56,
+    borderRadius: 8,
+    flexShrink: 0,
+    background: "#f2f2f2",
+  },
+  productInfo: { flex: 1, display: "flex", flexDirection: "column", gap: 2, minWidth: 0 },
+  productTitle: { fontSize: 14, fontWeight: 600, color: "#1a1a1a" },
+  productMeta: { fontSize: 13, color: "#888" },
+  qtyInput: {
+    width: 56,
+    padding: "8px 10px",
+    borderRadius: 8,
+    border: "1px solid #d9d9d9",
+    fontSize: 14,
+    textAlign: "center",
+  },
 };
+
+/**
+ * Card entrance animation + reason-step message reveal, shared across every
+ * wizard step. Pure CSS (no JS) so it works even if client hydration never
+ * kicks in through Shopify's App Proxy in dev mode.
+ */
+export const PORTAL_ANIMATION_CSS = `
+  @keyframes portalCardIn {
+    from { opacity: 0; transform: translateY(14px) scale(0.985); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
+  }
+  .portal-card {
+    animation: portalCardIn 0.45s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .portal-card { animation: none; }
+  }
+`;

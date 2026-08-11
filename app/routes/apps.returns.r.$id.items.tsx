@@ -4,7 +4,7 @@ import { Form, useActionData, useLoaderData, useNavigation } from "@remix-run/re
 import { authenticate } from "../shopify.server";
 import db from "../db.server";
 import { loadReturnRequestOrThrow } from "../lib/wizard.server";
-import { portalStyles as styles } from "../lib/portal-styles";
+import { portalStyles as styles, PORTAL_ANIMATION_CSS } from "../lib/portal-styles";
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const { session } = await authenticate.public.appProxy(request);
@@ -67,31 +67,36 @@ export default function ItemSelectionStep() {
 
   return (
     <div style={styles.page}>
-      <div style={styles.card}>
+      <style>{PORTAL_ANIMATION_CSS}</style>
+      <div style={styles.card} className="portal-card">
         <p style={styles.breadcrumb}>Order {returnRequest.orderName}</p>
         <h1 style={styles.heading}>Which items would you like to return?</h1>
         <p style={styles.subheading}>Select one or more items and confirm the quantity.</p>
 
         <Form method="post" action={`/apps/returns/r/${returnRequest.id}/items`} style={styles.form}>
-          <ul style={styles.itemList}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             {returnRequest.orderSnapshot.items.map((item) => (
-              <li key={item.fulfillmentLineItemId} style={styles.item}>
-                <label style={{ display: "flex", gap: 10, alignItems: "center" }}>
-                  <input
-                    type="checkbox"
-                    name="itemId"
-                    value={item.fulfillmentLineItemId}
-                    defaultChecked={selectedIds.has(item.fulfillmentLineItemId)}
-                  />
-                  <span>
+              <label key={item.fulfillmentLineItemId} style={styles.productCard}>
+                <input
+                  type="checkbox"
+                  name="itemId"
+                  value={item.fulfillmentLineItemId}
+                  defaultChecked={selectedIds.has(item.fulfillmentLineItemId)}
+                />
+                {item.imageUrl ? (
+                  <img src={item.imageUrl} alt="" style={styles.productThumb} />
+                ) : (
+                  <div style={styles.productThumbPlaceholder} />
+                )}
+                <div style={styles.productInfo}>
+                  <span style={styles.productTitle}>
                     {item.title}
                     {item.variantTitle ? ` — ${item.variantTitle}` : ""}
-                    <br />
-                    <span style={{ color: "#888", fontSize: 13 }}>
-                      {item.unitPrice} {item.currencyCode}
-                    </span>
                   </span>
-                </label>
+                  <span style={styles.productMeta}>
+                    {item.unitPrice} {item.currencyCode}
+                  </span>
+                </div>
                 {item.quantity > 1 ? (
                   <input
                     type="number"
@@ -103,14 +108,14 @@ export default function ItemSelectionStep() {
                         (li) => li.fulfillmentLineItemId === item.fulfillmentLineItemId,
                       )?.quantity ?? item.quantity
                     }
-                    style={{ ...styles.input, width: 64 }}
+                    style={styles.qtyInput}
                   />
                 ) : (
                   <input type="hidden" name={`qty_${item.fulfillmentLineItemId}`} value={1} />
                 )}
-              </li>
+              </label>
             ))}
-          </ul>
+          </div>
 
           <button style={styles.button} type="submit" disabled={isSubmitting}>
             {isSubmitting ? "Saving…" : "Continue"}

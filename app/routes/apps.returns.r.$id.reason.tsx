@@ -4,7 +4,7 @@ import { Form, useActionData, useLoaderData, useNavigation } from "@remix-run/re
 import { authenticate } from "../shopify.server";
 import db from "../db.server";
 import { loadReturnRequestOrThrow } from "../lib/wizard.server";
-import { portalStyles as styles } from "../lib/portal-styles";
+import { portalStyles as styles, PORTAL_ANIMATION_CSS } from "../lib/portal-styles";
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const { session } = await authenticate.public.appProxy(request);
@@ -65,12 +65,12 @@ export default function ReasonStep() {
           sibling of the radio input, shown only while that input is
           :checked. Works via full-page form posts too, since it's rendered
           server-side and needs no hydration. */}
-      <style>{`
+      <style>{PORTAL_ANIMATION_CSS}{`
         .reason-message { display: none; margin-left: 24px; font-size: 13px; color: #6b6b6b; line-height: 1.5; white-space: pre-line; }
         .reason-option:has(.reason-radio:checked) .reason-message { display: block; }
         .reason-option:has(.reason-radio:checked) { border-color: #1a1a1a; background: #fafafa; }
       `}</style>
-      <div style={styles.card}>
+      <div style={styles.card} className="portal-card">
         <p style={styles.breadcrumb}>Order {returnRequest.orderName}</p>
         <h1 style={styles.heading}>Why are you returning this?</h1>
         <p style={styles.subheading}>Choose the reason that best matches your situation.</p>

@@ -9,7 +9,7 @@ import {
   GENERIC_NOT_FOUND_MESSAGE,
   type OrderLookupResponse,
 } from "../lib/order-lookup.server";
-import { portalStyles as styles } from "../lib/portal-styles";
+import { portalStyles as styles, PORTAL_ANIMATION_CSS } from "../lib/portal-styles";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   await authenticate.public.appProxy(request);
@@ -85,7 +85,8 @@ export default function ReturnsPortal() {
 
   return (
     <div style={styles.page}>
-      <div style={styles.card}>
+      <style>{PORTAL_ANIMATION_CSS}</style>
+      <div style={styles.card} className="portal-card">
         <h1 style={styles.heading}>Start a return or exchange</h1>
         <p style={styles.subheading}>
           Enter your order number and the email or phone number used at checkout.

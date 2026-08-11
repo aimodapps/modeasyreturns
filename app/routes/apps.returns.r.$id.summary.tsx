@@ -3,7 +3,7 @@ import { redirect } from "@remix-run/node";
 import { useLoaderData } from "@remix-run/react";
 import { authenticate } from "../shopify.server";
 import db from "../db.server";
-import { portalStyles as styles } from "../lib/portal-styles";
+import { portalStyles as styles, PORTAL_ANIMATION_CSS } from "../lib/portal-styles";
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const { session } = await authenticate.public.appProxy(request);
@@ -36,7 +36,8 @@ export default function SummaryStep() {
 
   return (
     <div style={styles.page}>
-      <div style={styles.card}>
+      <style>{PORTAL_ANIMATION_CSS}</style>
+      <div style={styles.card} className="portal-card">
         <p style={styles.breadcrumb}>Order {returnRequest.orderName}</p>
         <h1 style={styles.heading}>Here's what you've selected</h1>
         <p style={styles.subheading}>
