@@ -38,6 +38,7 @@ if (host === "localhost") {
 }
 
 export default defineConfig({
+  clearScreen: false,
   // NOTE: a custom `base` (e.g. "/apps/returns/") was tried to get client JS
   // assets to load through Shopify's App Proxy (which only forwards paths
   // under /apps/returns/*), but Vite's dev server also requires the SSR

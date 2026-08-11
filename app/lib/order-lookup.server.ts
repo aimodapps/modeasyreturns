@@ -55,3 +55,39 @@ export async function performOrderLookup(
     discountApplications: order.discountApplications,
   };
 }
+
+export type OrderSnapshot = {
+  items: ReturnableItem[];
+  discountApplications: DiscountApplicationSummary[];
+};
+
+export async function createDraftReturnRequest(
+  shopDomain: string,
+  {
+    orderId,
+    orderName,
+    email,
+    phone,
+    items,
+    discountApplications,
+  }: {
+    orderId: string;
+    orderName: string;
+    email?: string;
+    phone?: string;
+    items: ReturnableItem[];
+    discountApplications: DiscountApplicationSummary[];
+  },
+) {
+  const snapshot: OrderSnapshot = { items, discountApplications };
+  return db.returnRequest.create({
+    data: {
+      shopDomain,
+      orderId,
+      orderName,
+      customerEmail: email ?? null,
+      customerPhone: phone ?? null,
+      orderSnapshot: snapshot,
+    },
+  });
+}

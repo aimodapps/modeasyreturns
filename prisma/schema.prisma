@@ -42,3 +42,102 @@ model ShopSettings {
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 }
+
+enum ConditionAction {
+  PROCEED
+  DENY
+}
+
+model ConditionOption {
+  id          String           @id @default(cuid())
+  shopDomain  String
+  label       String
+  code        String
+  action      ConditionAction  @default(PROCEED)
+  denyMessage String?
+  denyLinkUrl String?
+  sortOrder   Int              @default(0)
+  isActive    Boolean          @default(true)
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  lineItems ReturnRequestLineItem[]
+
+  @@unique([shopDomain, code])
+}
+
+model ReturnReason {
+  id            String   @id @default(cuid())
+  shopDomain    String
+  label         String
+  code          String
+  message       String
+  requiresPhoto Boolean  @default(false)
+  sortOrder     Int      @default(0)
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  lineItems ReturnRequestLineItem[]
+
+  @@unique([shopDomain, code])
+}
+
+enum ReturnStatus {
+  DRAFT
+  PENDING_REVIEW
+  APPROVED
+  DENIED
+  CANCELLED
+}
+
+model ReturnRequest {
+  id             String       @id @default(cuid())
+  shopDomain     String
+  orderId        String
+  orderName      String
+  customerEmail  String?
+  customerPhone  String?
+  status         ReturnStatus @default(DRAFT)
+  orderSnapshot  Json
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  lineItems ReturnRequestLineItem[]
+  photos    PhotoUpload[]
+
+  @@index([shopDomain, status])
+}
+
+model PhotoUpload {
+  id               String   @id @default(cuid())
+  returnRequestId  String
+  shopifyFileId    String
+  originalFilename String?
+  uploadedAt       DateTime @default(now())
+
+  returnRequest ReturnRequest @relation(fields: [returnRequestId], references: [id], onDelete: Cascade)
+}
+
+model ReturnRequestLineItem {
+  id                   String   @id @default(cuid())
+  returnRequestId      String
+  fulfillmentLineItemId String
+  shopifyLineItemId    String
+  title                String
+  variantTitle         String?
+  quantity             Int
+  unitPrice            Decimal  @db.Decimal(10, 2)
+  currencyCode         String
+  conditionOptionId    String?
+  conditionDenied      Boolean  @default(false)
+  reasonId             String?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  returnRequest   ReturnRequest    @relation(fields: [returnRequestId], references: [id], onDelete: Cascade)
+  conditionOption ConditionOption? @relation(fields: [conditionOptionId], references: [id])
+  reason          ReturnReason?    @relation(fields: [reasonId], references: [id])
+
+  @@unique([returnRequestId, fulfillmentLineItemId])
+}
