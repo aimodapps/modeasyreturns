@@ -122,6 +122,13 @@ export default function ReturnsPortal() {
         {actionData && !actionData.eligible && (
           <p style={styles.error}>{actionData.error}</p>
         )}
+
+        <p style={{ fontSize: 13, color: "#6b6b6b", marginTop: 24, textAlign: "center" }}>
+          Already started a return or exchange?{" "}
+          <a href="/apps/returns/status" style={{ color: "#1a1a1a" }}>
+            Check its status
+          </a>
+        </p>
       </div>
     </div>
   );

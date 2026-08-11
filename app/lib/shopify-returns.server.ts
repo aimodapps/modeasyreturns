@@ -269,6 +269,54 @@ export async function getOrderOutstandingBalance(
   return { amount: Number(money.amount), currencyCode: money.currencyCode };
 }
 
+const ORDER_EXCHANGE_FULFILLMENT_QUERY = `#graphql
+  query OrderExchangeFulfillmentStatus($orderId: ID!) {
+    order(id: $orderId) {
+      fulfillmentOrders(first: 20) {
+        nodes {
+          status
+          lineItems(first: 20) {
+            nodes {
+              lineItem {
+                variant {
+                  id
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+`;
+
+/**
+ * The order's whole-order fulfillment status is useless here -- the
+ * original items were already fulfilled long before a return/exchange ever
+ * happened, so it reads FULFILLED from day one regardless of the exchange
+ * replacement's own progress. Instead, find the specific FulfillmentOrder
+ * that Shopify created for the exchange replacement variant(s) and read
+ * *its* status: ON_HOLD until the return is marked received & inspected,
+ * then OPEN/IN_PROGRESS/SCHEDULED until fulfilled, then CLOSED once shipped.
+ */
+export async function getExchangeFulfillmentStatus(
+  admin: AdminApiContext,
+  { orderId, targetVariantIds }: { orderId: string; targetVariantIds: string[] },
+): Promise<string | null> {
+  if (targetVariantIds.length === 0) return null;
+  const variantIdSet = new Set(targetVariantIds);
+
+  const response = await admin.graphql(ORDER_EXCHANGE_FULFILLMENT_QUERY, { variables: { orderId } });
+  const json: any = await response.json();
+  const fulfillmentOrders = json?.data?.order?.fulfillmentOrders?.nodes ?? [];
+
+  const match = fulfillmentOrders.find((fo: any) =>
+    (fo.lineItems?.nodes ?? []).some((li: any) => variantIdSet.has(li.lineItem?.variant?.id)),
+  );
+
+  return match?.status ?? null;
+}
+
 const ORDER_ORIGINAL_TRANSACTION_QUERY = `#graphql
   query OrderOriginalTransaction($orderId: ID!) {
     order(id: $orderId) {

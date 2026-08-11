@@ -11,6 +11,8 @@ import {
   Button,
   TextField,
   Banner,
+  Thumbnail,
+  Link as PolarisLink,
 } from "@shopify/polaris";
 import { useState } from "react";
 import { TitleBar } from "@shopify/app-bridge-react";
@@ -22,8 +24,10 @@ import {
   createShopifyRefund,
   processShopifyReturn,
   getOrderOutstandingBalance,
+  getExchangeFulfillmentStatus,
   sendOrderInvoice,
 } from "../lib/shopify-returns.server";
+import { getReturnPhotoUrls } from "../lib/photo-upload.server";
 import { sendReturnApprovedEmail, sendReturnDeniedEmail, sendReturnReceivedEmail } from "../lib/email.server";
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
@@ -42,28 +46,33 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const { byLineItemId } = await computeReturnRefundBreakdown(returnRequest);
   const refundBreakdown = Object.fromEntries(byLineItemId);
 
-  const hasExchange = returnRequest.lineItems.some((li) => li.exchangeSelection);
-  let orderFulfillmentStatus: string | null = null;
+  const targetVariantIds = returnRequest.lineItems
+    .map((li) => li.exchangeSelection?.targetVariantId)
+    .filter((id): id is string => Boolean(id));
+  const hasExchange = targetVariantIds.length > 0;
+
+  let exchangeFulfillmentStatus: string | null = null;
   if (returnRequest.status === "APPROVED" && hasExchange) {
     try {
-      const response = await admin.graphql(
-        `#graphql
-          query OrderFulfillmentStatus($orderId: ID!) {
-            order(id: $orderId) {
-              displayFulfillmentStatus
-            }
-          }
-        `,
-        { variables: { orderId: returnRequest.orderId } },
-      );
-      const json: any = await response.json();
-      orderFulfillmentStatus = json?.data?.order?.displayFulfillmentStatus ?? null;
+      exchangeFulfillmentStatus = await getExchangeFulfillmentStatus(admin, {
+        orderId: returnRequest.orderId,
+        targetVariantIds,
+      });
     } catch (error) {
-      console.error("[app.returns.$id] failed to fetch live fulfillment status", error);
+      console.error("[app.returns.$id] failed to fetch live exchange fulfillment status", error);
     }
   }
 
-  return { returnRequest, refundBreakdown, hasExchange, orderFulfillmentStatus };
+  let photoUrls: Record<string, string | null> = {};
+  if (returnRequest.photos.length > 0) {
+    try {
+      photoUrls = await getReturnPhotoUrls(admin, returnRequest.photos.map((p) => p.shopifyFileId));
+    } catch (error) {
+      console.error("[app.returns.$id] failed to fetch photo preview URLs", error);
+    }
+  }
+
+  return { returnRequest, refundBreakdown, hasExchange, exchangeFulfillmentStatus, photoUrls };
 };
 
 export const action = async ({ request, params }: ActionFunctionArgs) => {
@@ -267,18 +276,36 @@ const STAGE_LABELS: Record<string, string> = {
   COMPLETED: "Completed",
 };
 
+// FulfillmentOrder.status values, mapped to what the exchange step should say.
+function exchangeShippedLabel(status: string | null): { label: string; done: boolean } {
+  switch (status) {
+    case "CLOSED":
+      return { label: "Exchange Shipped", done: true };
+    case "ON_HOLD":
+      return { label: "Exchange on hold -- awaiting return receipt", done: false };
+    case "CANCELLED":
+      return { label: "Exchange cancelled", done: false };
+    case "OPEN":
+    case "IN_PROGRESS":
+    case "SCHEDULED":
+      return { label: "Exchange ready -- preparing for shipment", done: false };
+    default:
+      return { label: "Preparing exchange for shipment", done: false };
+  }
+}
+
 function LifecycleStepper({
   lifecycleStage,
   hasExchange,
   balanceDueAmount,
   balanceDueCurrency,
-  orderFulfillmentStatus,
+  exchangeFulfillmentStatus,
 }: {
   lifecycleStage: string | null;
   hasExchange: boolean;
   balanceDueAmount: unknown;
   balanceDueCurrency: string | null;
-  orderFulfillmentStatus: string | null;
+  exchangeFulfillmentStatus: string | null;
 }) {
   const order = ["AWAITING_RECEIPT", "BALANCE_DUE", "INVOICE_SENT", "COMPLETED"];
   const currentIndex = lifecycleStage ? order.indexOf(lifecycleStage) : -1;
@@ -318,16 +345,16 @@ function LifecycleStepper({
             </InlineStack>
           );
         })}
-        {hasExchange && (
-          <InlineStack gap="200" blockAlign="center">
-            <Badge tone={orderFulfillmentStatus === "FULFILLED" ? "success" : undefined}>
-              {orderFulfillmentStatus === "FULFILLED" ? "Done" : "Pending"}
-            </Badge>
-            <Text as="span">
-              {orderFulfillmentStatus === "FULFILLED" ? "Exchange Shipped" : "Preparing exchange for shipment"}
-            </Text>
-          </InlineStack>
-        )}
+        {hasExchange &&
+          (() => {
+            const { label, done } = exchangeShippedLabel(exchangeFulfillmentStatus);
+            return (
+              <InlineStack gap="200" blockAlign="center">
+                <Badge tone={done ? "success" : undefined}>{done ? "Done" : "Pending"}</Badge>
+                <Text as="span">{label}</Text>
+              </InlineStack>
+            );
+          })()}
       </BlockStack>
       {balanceDueAmount != null && (
         <Text as="p" tone="caution">
@@ -339,7 +366,8 @@ function LifecycleStepper({
 }
 
 export default function ReturnDetail() {
-  const { returnRequest, refundBreakdown, hasExchange, orderFulfillmentStatus } = useLoaderData<typeof loader>();
+  const { returnRequest, refundBreakdown, hasExchange, exchangeFulfillmentStatus, photoUrls } =
+    useLoaderData<typeof loader>();
   const navigation = useNavigation();
   const isSubmitting = navigation.state === "submitting";
   const [denyNote, setDenyNote] = useState("");
@@ -396,7 +424,7 @@ export default function ReturnDetail() {
                   hasExchange={hasExchange}
                   balanceDueAmount={returnRequest.balanceDueAmount}
                   balanceDueCurrency={returnRequest.balanceDueCurrency}
-                  orderFulfillmentStatus={orderFulfillmentStatus}
+                  exchangeFulfillmentStatus={exchangeFulfillmentStatus}
                 />
               </Card>
             )}
@@ -450,12 +478,29 @@ export default function ReturnDetail() {
                   Photos
                 </Text>
                 {returnRequest.photos.length === 0 && <Text as="p" tone="subdued">None uploaded.</Text>}
-                <InlineStack gap="200">
-                  {returnRequest.photos.map((photo) => (
-                    <Text as="p" key={photo.id} tone="subdued">
-                      {photo.originalFilename ?? photo.shopifyFileId} (view in Shopify Files)
-                    </Text>
-                  ))}
+                <InlineStack gap="300">
+                  {returnRequest.photos.map((photo) => {
+                    const url = photoUrls[photo.shopifyFileId];
+                    const label = photo.originalFilename ?? photo.shopifyFileId;
+                    return (
+                      <BlockStack key={photo.id} gap="100" align="center">
+                        {url && (
+                          <PolarisLink url={url} target="_blank">
+                            <Thumbnail source={url} alt={label} size="large" />
+                          </PolarisLink>
+                        )}
+                        {url ? (
+                          <PolarisLink url={url} target="_blank">
+                            {label}
+                          </PolarisLink>
+                        ) : (
+                          <Text as="span" tone="subdued">
+                            {label} (still processing)
+                          </Text>
+                        )}
+                      </BlockStack>
+                    );
+                  })}
                 </InlineStack>
               </BlockStack>
             </Card>

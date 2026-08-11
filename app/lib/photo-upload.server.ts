@@ -97,3 +97,35 @@ export async function uploadReturnPhoto(
 
   return { shopifyFileId: createdFile.id };
 }
+
+const RETURN_PHOTO_URLS_QUERY = `#graphql
+  query ReturnPhotoUrls($ids: [ID!]!) {
+    nodes(ids: $ids) {
+      ... on MediaImage {
+        id
+        image {
+          url
+        }
+      }
+      ... on GenericFile {
+        id
+        url
+      }
+    }
+  }
+`;
+
+/** Photos are uploaded as MediaImage (see uploadReturnPhoto's contentType: "IMAGE" above); GenericFile is handled too in case that ever changes. Files can briefly be in a PROCESSING state right after upload, during which the URL isn't available yet. */
+export async function getReturnPhotoUrls(
+  admin: AdminApiContext,
+  fileIds: string[],
+): Promise<Record<string, string | null>> {
+  if (fileIds.length === 0) return {};
+  const response = await admin.graphql(RETURN_PHOTO_URLS_QUERY, { variables: { ids: fileIds } });
+  const json: any = await response.json();
+  const urls: Record<string, string | null> = {};
+  for (const node of json?.data?.nodes ?? []) {
+    if (node?.id) urls[node.id] = node.image?.url ?? node.url ?? null;
+  }
+  return urls;
+}

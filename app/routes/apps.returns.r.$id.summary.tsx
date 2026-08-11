@@ -5,11 +5,12 @@ import { authenticate } from "../shopify.server";
 import db from "../db.server";
 import { computeReturnRefundBreakdown } from "../lib/return-refund.server";
 import { sendReturnInitiatedEmail } from "../lib/email.server";
+import { getExchangeFulfillmentStatus } from "../lib/shopify-returns.server";
 import { portalStyles as styles, PORTAL_ANIMATION_CSS } from "../lib/portal-styles";
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
-  const { session } = await authenticate.public.appProxy(request);
-  if (!session) throw new Response("Not found", { status: 404 });
+  const { admin, session } = await authenticate.public.appProxy(request);
+  if (!admin || !session) throw new Response("Not found", { status: 404 });
 
   const returnRequest = await db.returnRequest.findFirst({
     where: { id: params.id!, shopDomain: session.shop },
@@ -41,7 +42,22 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const { byLineItemId } = await computeReturnRefundBreakdown(returnRequest);
   const refundBreakdown = Object.fromEntries(byLineItemId);
 
-  return { returnRequest, refundBreakdown };
+  const targetVariantIds = returnRequest.lineItems
+    .map((li) => li.exchangeSelection?.targetVariantId)
+    .filter((id): id is string => Boolean(id));
+  let exchangeFulfillmentStatus: string | null = null;
+  if (returnRequest.status === "APPROVED" && targetVariantIds.length > 0) {
+    try {
+      exchangeFulfillmentStatus = await getExchangeFulfillmentStatus(admin, {
+        orderId: returnRequest.orderId,
+        targetVariantIds,
+      });
+    } catch (error) {
+      console.error("[apps.returns.summary] failed to fetch live exchange fulfillment status", error);
+    }
+  }
+
+  return { returnRequest, refundBreakdown, exchangeFulfillmentStatus };
 };
 
 export const action = async ({ request, params }: ActionFunctionArgs) => {
@@ -122,8 +138,28 @@ const CUSTOMER_STAGE_STEPS = [
   { key: "COMPLETED", label: "Completed" },
 ];
 
+// FulfillmentOrder.status values, mapped to what the exchange step should say.
+function exchangeShippedLabel(status: string | null): { label: string; done: boolean } {
+  switch (status) {
+    case "CLOSED":
+      return { label: "Exchange Shipped", done: true };
+    case "ON_HOLD":
+      return { label: "Exchange on hold -- awaiting your return", done: false };
+    case "CANCELLED":
+      return { label: "Exchange cancelled", done: false };
+    case "OPEN":
+    case "IN_PROGRESS":
+    case "SCHEDULED":
+      return { label: "Exchange preparing for shipment", done: false };
+    default:
+      return { label: "Exchange preparing for shipment", done: false };
+  }
+}
+
 function StatusScreen({
   returnRequest,
+  hasExchange,
+  exchangeFulfillmentStatus,
 }: {
   returnRequest: {
     id: string;
@@ -136,6 +172,8 @@ function StatusScreen({
     balanceDueCurrency: string | null;
     lineItems: Array<{ currencyCode: string }>;
   };
+  hasExchange: boolean;
+  exchangeFulfillmentStatus: string | null;
 }) {
   const currency = returnRequest.lineItems[0]?.currencyCode ?? "";
 
@@ -214,6 +252,24 @@ function StatusScreen({
               </li>
             );
           })}
+          {hasExchange &&
+            (() => {
+              const { label, done } = exchangeShippedLabel(exchangeFulfillmentStatus);
+              return (
+                <li style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <span
+                    style={{
+                      width: 10,
+                      height: 10,
+                      borderRadius: "50%",
+                      flexShrink: 0,
+                      background: done ? "#1a7f37" : "#d0d0d0",
+                    }}
+                  />
+                  <span style={{ fontSize: 14, color: done ? "#1a1a1a" : "#6b6b6b" }}>{label}</span>
+                </li>
+              );
+            })()}
         </ul>
 
         {returnRequest.balanceDueAmount != null && (
@@ -233,12 +289,19 @@ function StatusScreen({
 }
 
 export default function SummaryStep() {
-  const { returnRequest, refundBreakdown } = useLoaderData<typeof loader>();
+  const { returnRequest, refundBreakdown, exchangeFulfillmentStatus } = useLoaderData<typeof loader>();
   const navigation = useNavigation();
   const isSubmitting = navigation.state === "submitting";
 
   if (returnRequest.status !== "DRAFT") {
-    return <StatusScreen returnRequest={returnRequest} />;
+    const hasExchange = returnRequest.lineItems.some((li) => li.exchangeSelection);
+    return (
+      <StatusScreen
+        returnRequest={returnRequest}
+        hasExchange={hasExchange}
+        exchangeFulfillmentStatus={exchangeFulfillmentStatus}
+      />
+    );
   }
 
   const netCents = computeNet(returnRequest, refundBreakdown);
