@@ -1,7 +1,8 @@
 import type { LoaderFunctionArgs } from "@remix-run/node";
-import { useLoaderData, Link as RemixLink } from "@remix-run/react";
-import { Page, Layout, Card, IndexTable, Badge, Text, Box } from "@shopify/polaris";
+import { useLoaderData, useSearchParams, Link as RemixLink } from "@remix-run/react";
+import { Page, Layout, Card, IndexTable, Badge, Text, Box, InlineStack } from "@shopify/polaris";
 import { TitleBar } from "@shopify/app-bridge-react";
+import type { ReturnStatus, ReturnLifecycleStage } from "@prisma/client";
 import { authenticate } from "../shopify.server";
 import db from "../db.server";
 
@@ -20,19 +21,33 @@ const STAGE_LABELS: Record<string, string> = {
   COMPLETED: "Completed",
 };
 
+const VALID_STATUSES: ReturnStatus[] = ["PENDING_REVIEW", "APPROVED", "DENIED", "CANCELLED"];
+const VALID_STAGES: ReturnLifecycleStage[] = ["AWAITING_RECEIPT", "BALANCE_DUE", "INVOICE_SENT", "COMPLETED"];
+
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
+  const url = new URL(request.url);
+  const statusParam = url.searchParams.get("status");
+  const stageParam = url.searchParams.get("stage");
+  const statusFilter = VALID_STATUSES.find((s) => s === statusParam) ?? null;
+  const stageFilter = VALID_STAGES.find((s) => s === stageParam) ?? null;
+
   const requests = await db.returnRequest.findMany({
-    where: { shopDomain: session.shop, status: { not: "DRAFT" } },
+    where: {
+      shopDomain: session.shop,
+      status: statusFilter ?? { not: "DRAFT" },
+      lifecycleStage: stageFilter ?? undefined,
+    },
     include: { lineItems: true },
     orderBy: { submittedAt: "desc" },
     take: 100,
   });
-  return { requests };
+  return { requests, statusFilter, stageFilter };
 };
 
 export default function ReturnsQueue() {
-  const { requests } = useLoaderData<typeof loader>();
+  const { requests, statusFilter, stageFilter } = useLoaderData<typeof loader>();
+  const [, setSearchParams] = useSearchParams();
 
   const rowMarkup = requests.map((request, index) => (
     <IndexTable.Row id={request.id} key={request.id} position={index}>
@@ -58,11 +73,25 @@ export default function ReturnsQueue() {
     </IndexTable.Row>
   ));
 
+  const filterLabel = stageFilter ? STAGE_LABELS[stageFilter] : statusFilter ? statusFilter.replace("_", " ") : null;
+
   return (
     <Page>
       <TitleBar title="Return requests" />
       <Layout>
         <Layout.Section>
+          {filterLabel && (
+            <Box paddingBlockEnd="200">
+              <InlineStack gap="200" blockAlign="center">
+                <Text as="span" tone="subdued">
+                  Filtered: {filterLabel}
+                </Text>
+                <RemixLink to="/app/returns" onClick={() => setSearchParams({})}>
+                  Clear filter
+                </RemixLink>
+              </InlineStack>
+            </Box>
+          )}
           <Card padding="0">
             <IndexTable
               resourceName={{ singular: "return request", plural: "return requests" }}
@@ -81,7 +110,7 @@ export default function ReturnsQueue() {
             {requests.length === 0 && (
               <Box padding="400">
                 <Text as="p" tone="subdued">
-                  No return requests yet.
+                  {filterLabel ? "No return requests match this filter." : "No return requests yet."}
                 </Text>
               </Box>
             )}

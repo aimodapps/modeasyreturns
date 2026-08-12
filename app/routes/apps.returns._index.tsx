@@ -69,6 +69,7 @@ async function handleAction(request: Request) {
   const draft = await createDraftReturnRequest(session.shop, {
     orderId: result.order.id,
     orderName: result.order.name,
+    orderCreatedAt: result.order.createdAt,
     email,
     phone,
     items: result.items,

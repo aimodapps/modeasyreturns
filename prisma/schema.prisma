@@ -259,6 +259,13 @@ model DiscountRule {
   discountValue      Decimal          @db.Decimal(10, 2)
   appliesTo          DiscountScope    @default(ALL_ITEMS)
   scopeProductIds    Json?
+  // Optional campaign window -- lets the same discount title/code be
+  // reconfigured across separate occasional runs (e.g. "Buy 3 Get 20% off"
+  // with different terms each time) without an order from an older run
+  // being evaluated against whichever terms happen to be saved today.
+  // Null on either end means unbounded in that direction.
+  validFrom          DateTime?
+  validUntil         DateTime?
   isActive           Boolean          @default(true)
   notes              String?
   createdAt          DateTime         @default(now())

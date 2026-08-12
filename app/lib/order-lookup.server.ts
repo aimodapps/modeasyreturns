@@ -13,7 +13,7 @@ export const GENERIC_NOT_FOUND_MESSAGE =
 export type OrderLookupResponse =
   | {
       eligible: true;
-      order: { id: string; name: string };
+      order: { id: string; name: string; createdAt: string };
       items: ReturnableItem[];
       discountApplications: DiscountApplicationSummary[];
       allLineItems: OrderLineItemForDiscount[];
@@ -52,7 +52,7 @@ export async function performOrderLookup(
 
   return {
     eligible: true,
-    order: { id: order.id, name: order.name },
+    order: { id: order.id, name: order.name, createdAt: order.createdAt },
     items: order.returnableItems,
     discountApplications: order.discountApplications,
     allLineItems: order.allLineItems,
@@ -63,6 +63,9 @@ export type OrderSnapshot = {
   items: ReturnableItem[];
   discountApplications: DiscountApplicationSummary[];
   allLineItems: OrderLineItemForDiscount[];
+  // Needed to match a DiscountRule's optional validFrom/validUntil campaign
+  // window against the order it was actually applied to, not "today".
+  orderCreatedAt: string;
 };
 
 export async function createDraftReturnRequest(
@@ -70,6 +73,7 @@ export async function createDraftReturnRequest(
   {
     orderId,
     orderName,
+    orderCreatedAt,
     email,
     phone,
     items,
@@ -78,6 +82,7 @@ export async function createDraftReturnRequest(
   }: {
     orderId: string;
     orderName: string;
+    orderCreatedAt: string;
     email?: string;
     phone?: string;
     items: ReturnableItem[];
@@ -85,7 +90,7 @@ export async function createDraftReturnRequest(
     allLineItems: OrderLineItemForDiscount[];
   },
 ) {
-  const snapshot: OrderSnapshot = { items, discountApplications, allLineItems };
+  const snapshot: OrderSnapshot = { items, discountApplications, allLineItems, orderCreatedAt };
   return db.returnRequest.create({
     data: {
       shopDomain,

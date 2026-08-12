@@ -18,6 +18,9 @@ export type DiscountEngineRule = {
   minAmount: number | null;
   appliesTo: "ALL_ITEMS" | "SPECIFIC_PRODUCTS";
   scopeProductIds: string[] | null;
+  // Null on either end means unbounded in that direction.
+  validFrom: string | null;
+  validUntil: string | null;
 };
 
 export type ReturningLineItemRef = {
@@ -43,17 +46,36 @@ export type ReallocationResult = {
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
+function coversOrderDate(rule: DiscountEngineRule, orderCreatedAt: string): boolean {
+  const orderTime = new Date(orderCreatedAt).getTime();
+  if (rule.validFrom && orderTime < new Date(rule.validFrom).getTime()) return false;
+  if (rule.validUntil && orderTime > new Date(rule.validUntil).getTime()) return false;
+  return true;
+}
+
+/**
+ * The same discount title/code can be reused across separate occasional
+ * campaigns with different terms (e.g. "Buy 3 Get 20% off" requiring 3 items
+ * one time, a different minimum the next) -- so a title/code match alone
+ * isn't enough. Rules with a validFrom/validUntil window only match orders
+ * placed within that window; among matches, prefer the most narrowly-scoped
+ * (has a date window) over an unbounded fallback rule, so a dated rule for
+ * that specific campaign wins over a generic always-on one of the same name.
+ */
 function findMatchingRule(
   discountApp: DiscountEngineDiscountApplication,
   rules: DiscountEngineRule[],
+  orderCreatedAt: string,
 ): DiscountEngineRule | null {
-  return (
-    rules.find(
-      (rule) =>
-        (rule.discountCode && discountApp.code && rule.discountCode === discountApp.code) ||
-        rule.discountTitleMatch.trim().toLowerCase() === discountApp.title.trim().toLowerCase(),
-    ) ?? null
+  const candidates = rules.filter(
+    (rule) =>
+      (rule.discountCode && discountApp.code && rule.discountCode === discountApp.code) ||
+      rule.discountTitleMatch.trim().toLowerCase() === discountApp.title.trim().toLowerCase(),
   );
+  const inWindow = candidates.filter((rule) => coversOrderDate(rule, orderCreatedAt));
+  if (inWindow.length === 0) return null;
+  const dated = inWindow.find((rule) => rule.validFrom || rule.validUntil);
+  return dated ?? inWindow[0];
 }
 
 function inScope(item: DiscountEngineOrderLineItem, rule: DiscountEngineRule): boolean {
@@ -78,11 +100,13 @@ export function recalculateReturnRefunds({
   discountApplications,
   rules,
   returningItems,
+  orderCreatedAt,
 }: {
   allLineItems: DiscountEngineOrderLineItem[];
   discountApplications: DiscountEngineDiscountApplication[];
   rules: DiscountEngineRule[];
   returningItems: ReturningLineItemRef[];
+  orderCreatedAt: string;
 }): ReallocationResult {
   const returningByLineItem = new Map(returningItems.map((r) => [r.lineItemId, r.quantity]));
   const results: LineItemReallocation[] = [];
@@ -99,7 +123,7 @@ export function recalculateReturnRefunds({
   >();
 
   for (const discountApp of discountApplications) {
-    const rule = findMatchingRule(discountApp, rules);
+    const rule = findMatchingRule(discountApp, rules, orderCreatedAt);
     if (!rule) continue;
 
     const groupItems = allLineItems.filter((item) => inScope(item, rule));
@@ -158,11 +182,11 @@ export function recalculateReturnRefunds({
     }
 
     const discountApp = discountApplications.find((da) => {
-      const rule = findMatchingRule(da, rules);
+      const rule = findMatchingRule(da, rules, orderCreatedAt);
       if (!rule) return false;
       return inScope(item, rule);
     });
-    const rule = discountApp ? findMatchingRule(discountApp, rules) : null;
+    const rule = discountApp ? findMatchingRule(discountApp, rules, orderCreatedAt) : null;
 
     if (!rule || !discountApp) {
       results.push({
@@ -172,7 +196,7 @@ export function recalculateReturnRefunds({
         stillQualifies: null,
         originalAllocatedRefund,
         recalculatedRefund: originalAllocatedRefund,
-        note: "Discount rule not configured for this item's discount -- refunding at the original allocated price. Configure a rule under Settings -> Discount Rules to enable automatic recalculation.",
+        note: "No discount rule covers this item's discount for the order's date -- refunding at the original allocated price. Configure a rule (with a date range if it's a recurring campaign) under Settings -> Discount Rules to enable automatic recalculation.",
       });
       continue;
     }

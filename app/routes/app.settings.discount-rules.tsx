@@ -50,12 +50,17 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const scopeProductIdsRaw = String(formData.get("scopeProductIds") ?? "").trim();
   const notes = String(formData.get("notes") ?? "").trim() || null;
   const isActive = formData.get("isActive") === "true";
+  const validFromRaw = String(formData.get("validFrom") ?? "").trim();
+  const validUntilRaw = String(formData.get("validUntil") ?? "").trim();
 
   if (!discountTitleMatch) {
     return { ok: false, error: "The discount title to match is required." };
   }
   if (!minQuantityRaw && !minAmountRaw) {
     return { ok: false, error: "Set a minimum quantity, a minimum amount, or both." };
+  }
+  if (validFromRaw && validUntilRaw && validFromRaw > validUntilRaw) {
+    return { ok: false, error: "The campaign start date must be before the end date." };
   }
 
   const data = {
@@ -70,6 +75,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       appliesTo === "SPECIFIC_PRODUCTS" && scopeProductIdsRaw
         ? scopeProductIdsRaw.split(",").map((s) => s.trim()).filter(Boolean)
         : undefined,
+    validFrom: validFromRaw ? new Date(validFromRaw) : null,
+    validUntil: validUntilRaw ? new Date(validUntilRaw) : null,
     notes,
     isActive,
   };
@@ -95,7 +102,14 @@ const EMPTY_FORM = {
   scopeProductIds: "",
   notes: "",
   isActive: true,
+  validFrom: "",
+  validUntil: "",
 };
+
+function toDateInputValue(value: string | Date | null): string {
+  if (!value) return "";
+  return new Date(value).toISOString().slice(0, 10);
+}
 
 export default function DiscountRulesSettings() {
   const { rules } = useLoaderData<typeof loader>();
@@ -127,6 +141,8 @@ export default function DiscountRulesSettings() {
       scopeProductIds: Array.isArray(rule.scopeProductIds) ? rule.scopeProductIds.join(", ") : "",
       notes: rule.notes ?? "",
       isActive: rule.isActive,
+      validFrom: toDateInputValue(rule.validFrom),
+      validUntil: toDateInputValue(rule.validUntil),
     });
     setModalOpen(true);
   };
@@ -144,6 +160,8 @@ export default function DiscountRulesSettings() {
         scopeProductIds: form.scopeProductIds,
         notes: form.notes,
         isActive: String(form.isActive),
+        validFrom: form.validFrom,
+        validUntil: form.validUntil,
       },
       { method: "post" },
     );
@@ -162,6 +180,11 @@ export default function DiscountRulesSettings() {
       </IndexTable.Cell>
       <IndexTable.Cell>
         {rule.minQuantity ? `Min qty ${rule.minQuantity}` : rule.minAmount ? `Min amount ${rule.minAmount}` : "—"}
+      </IndexTable.Cell>
+      <IndexTable.Cell>
+        {rule.validFrom || rule.validUntil
+          ? `${rule.validFrom ? toDateInputValue(rule.validFrom) : "any time"} → ${rule.validUntil ? toDateInputValue(rule.validUntil) : "ongoing"}`
+          : "Always"}
       </IndexTable.Cell>
       <IndexTable.Cell>
         <Badge tone={rule.isActive ? "success" : undefined}>{rule.isActive ? "Active" : "Inactive"}</Badge>
@@ -190,7 +213,12 @@ export default function DiscountRulesSettings() {
               Mirror a multi-item discount's eligibility rule here (e.g. "Buy 3 Get 20% off" requires
               3+ items) so refunds are recalculated correctly when a customer returns only some of
               the qualifying items. Match by the exact discount title (or code) as it appears on the
-              order.
+              order. If you rerun an occasional campaign with different terms each time (same name,
+              different minimums), set a campaign window on each version -- a return is matched
+              against the rule whose window actually covers the date that order was placed, not
+              whichever version is saved today. Discounts from other apps you haven't configured a
+              rule for are always refunded at their originally-allocated price automatically -- no
+              rule needed for that safety net.
             </Text>
           </Card>
         </Layout.Section>
@@ -199,7 +227,13 @@ export default function DiscountRulesSettings() {
             <IndexTable
               resourceName={{ singular: "rule", plural: "rules" }}
               itemCount={rules.length}
-              headings={[{ title: "Discount title" }, { title: "Threshold" }, { title: "Status" }, { title: "" }]}
+              headings={[
+                { title: "Discount title" },
+                { title: "Threshold" },
+                { title: "Campaign window" },
+                { title: "Status" },
+                { title: "" },
+              ]}
               selectable={false}
             >
               {rowMarkup}
@@ -269,6 +303,21 @@ export default function DiscountRulesSettings() {
                 autoComplete="off"
               />
             )}
+            <TextField
+              label="Campaign starts (optional)"
+              helpText="Leave both dates blank for a rule that always applies. Only needed if you rerun this discount with different terms on different occasions."
+              type="date"
+              value={form.validFrom}
+              onChange={(validFrom) => setForm((f) => ({ ...f, validFrom }))}
+              autoComplete="off"
+            />
+            <TextField
+              label="Campaign ends (optional)"
+              type="date"
+              value={form.validUntil}
+              onChange={(validUntil) => setForm((f) => ({ ...f, validUntil }))}
+              autoComplete="off"
+            />
             <TextField
               label="Notes (internal)"
               value={form.notes}

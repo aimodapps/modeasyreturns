@@ -1,7 +1,7 @@
 # Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
 
 client_id = "802577071443a106b8e17d1c982d2ae3"
-name = "mod-easy-returns"
+name = "Mod Easy Returns"
 application_url = "https://example.com"
 embedded = true
 

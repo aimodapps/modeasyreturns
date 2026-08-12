@@ -458,10 +458,11 @@ export default function ReturnDetail() {
                       ) : (
                         <Text as="p">
                           Refund: {(reallocation?.recalculatedRefund ?? naiveRefund).toFixed(2)} {item.currencyCode}
-                          {reallocation?.stillQualifies === false && (
-                            <Text as="span" tone="caution">
+                          {reallocation?.hadDiscount && (
+                            <Text as="span" tone={reallocation.stillQualifies === false ? "caution" : "subdued"}>
                               {" "}
-                              (discount reallocated -- {reallocation.note})
+                              ({reallocation.matchedDiscountTitle ? `"${reallocation.matchedDiscountTitle}" -- ` : ""}
+                              {reallocation.note})
                             </Text>
                           )}
                         </Text>

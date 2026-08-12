@@ -33,11 +33,14 @@ export async function computeReturnRefundBreakdown(
       minAmount: r.minAmount != null ? Number(r.minAmount) : null,
       appliesTo: r.appliesTo,
       scopeProductIds: Array.isArray(r.scopeProductIds) ? (r.scopeProductIds as string[]) : null,
+      validFrom: r.validFrom ? r.validFrom.toISOString() : null,
+      validUntil: r.validUntil ? r.validUntil.toISOString() : null,
     })),
     returningItems: returnRequest.lineItems.map((li) => ({
       lineItemId: li.shopifyLineItemId,
       quantity: li.quantity,
     })),
+    orderCreatedAt: snapshot.orderCreatedAt,
   });
 
   const byLineItemId = new Map<string, LineItemReallocation>();
