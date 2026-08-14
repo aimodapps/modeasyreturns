@@ -1,0 +1,41 @@
+# Render Blueprint -- provisions the web service + Postgres database together.
+# Deploy via Render dashboard: New -> Blueprint -> select this repo.
+# Docs: https://render.com/docs/blueprint-spec
+#
+# Fields left as sync: false are intentionally NOT stored here -- Render
+# will prompt for them once, interactively, when the blueprint is applied.
+
+databases:
+  - name: mod-easy-returns-db
+    plan: basic-1gb # not the free tier -- Render's free Postgres auto-expires after 30 days
+    region: oregon
+
+services:
+  - name: mod-easy-returns
+    type: web
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter # not the free tier -- it sleeps after 15min idle, which breaks both
+    # the customer-facing wizard's first load and Shopify's webhook response-time expectations
+    region: oregon
+    healthCheckPath: /
+    envVars:
+      - key: SHOPIFY_API_KEY
+        value: "802577071443a106b8e17d1c982d2ae3"
+      - key: SHOPIFY_API_SECRET
+        sync: false # from Partner Dashboard -> your app -> Client secret
+      - key: SCOPES
+        value: "read_orders,read_products,read_files,write_files,write_returns,write_orders,write_draft_orders"
+      # Predictable from this service's `name` above, but Render appends a
+      # suffix if that subdomain is already taken -- verify against the
+      # actual assigned URL after first deploy and update if it differs.
+      - key: SHOPIFY_APP_URL
+        value: "https://mod-easy-returns.onrender.com"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: mod-easy-returns-db
+          property: connectionString
+      - key: RESEND_API_KEY
+        sync: false
+      - key: RETURNS_EMAIL_FROM
+        sync: false
