@@ -5,6 +5,8 @@ import { authenticate } from "../shopify.server";
 import db from "../db.server";
 import { loadReturnRequestOrThrow } from "../lib/wizard.server";
 import { portalStyles as styles, PORTAL_ANIMATION_CSS } from "../lib/portal-styles";
+import { getPortalBranding } from "../lib/portal-branding.server";
+import { PortalLogo } from "../components/PortalLogo";
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const { session } = await authenticate.public.appProxy(request);
@@ -14,12 +16,15 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     throw redirect(`/apps/returns/r/${returnRequest.id}/items`);
   }
 
-  const conditions = await db.conditionOption.findMany({
-    where: { shopDomain: session.shop, isActive: true },
-    orderBy: { sortOrder: "asc" },
-  });
+  const [conditions, branding] = await Promise.all([
+    db.conditionOption.findMany({
+      where: { shopDomain: session.shop, isActive: true },
+      orderBy: { sortOrder: "asc" },
+    }),
+    getPortalBranding(session.shop),
+  ]);
 
-  return { returnRequest, conditions };
+  return { returnRequest, conditions, branding };
 };
 
 export const action = async ({ request, params }: ActionFunctionArgs) => {
@@ -53,7 +58,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 };
 
 export default function ConditionStep() {
-  const { returnRequest, conditions } = useLoaderData<typeof loader>();
+  const { returnRequest, conditions, branding } = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   const navigation = useNavigation();
   const isSubmitting = navigation.state === "submitting";
@@ -63,6 +68,7 @@ export default function ConditionStep() {
       <div style={styles.page}>
         <style>{PORTAL_ANIMATION_CSS}</style>
         <div style={styles.card} className="portal-card">
+          <PortalLogo logoUrl={branding.logoUrl} logoWidthPx={branding.logoWidthPx} />
           <p style={styles.breadcrumb}>Order {returnRequest.orderName}</p>
           <h1 style={styles.heading}>We're unable to accept this return</h1>
           <p style={{ fontSize: 15, color: "#333", lineHeight: 1.6 }}>
@@ -84,6 +90,7 @@ export default function ConditionStep() {
     <div style={styles.page}>
       <style>{PORTAL_ANIMATION_CSS}</style>
       <div style={styles.card} className="portal-card">
+        <PortalLogo logoUrl={branding.logoUrl} logoWidthPx={branding.logoWidthPx} />
         <p style={styles.breadcrumb}>Order {returnRequest.orderName}</p>
         <h1 style={styles.heading}>What condition is the item in?</h1>
         <p style={styles.subheading}>

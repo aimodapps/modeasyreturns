@@ -7,6 +7,8 @@ import { computeReturnRefundBreakdown } from "../lib/return-refund.server";
 import { sendReturnInitiatedEmail } from "../lib/email.server";
 import { getExchangeFulfillmentStatus } from "../lib/shopify-returns.server";
 import { portalStyles as styles, PORTAL_ANIMATION_CSS } from "../lib/portal-styles";
+import { getPortalBranding, type PortalBranding } from "../lib/portal-branding.server";
+import { PortalLogo } from "../components/PortalLogo";
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.public.appProxy(request);
@@ -57,7 +59,9 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     }
   }
 
-  return { returnRequest, refundBreakdown, exchangeFulfillmentStatus };
+  const branding = await getPortalBranding(session.shop);
+
+  return { returnRequest, refundBreakdown, exchangeFulfillmentStatus, branding };
 };
 
 export const action = async ({ request, params }: ActionFunctionArgs) => {
@@ -160,6 +164,7 @@ function StatusScreen({
   returnRequest,
   hasExchange,
   exchangeFulfillmentStatus,
+  branding,
 }: {
   returnRequest: {
     id: string;
@@ -174,6 +179,7 @@ function StatusScreen({
   };
   hasExchange: boolean;
   exchangeFulfillmentStatus: string | null;
+  branding: PortalBranding;
 }) {
   const currency = returnRequest.lineItems[0]?.currencyCode ?? "";
 
@@ -182,6 +188,7 @@ function StatusScreen({
       <div style={styles.page}>
         <style>{PORTAL_ANIMATION_CSS}</style>
         <div style={styles.card} className="portal-card">
+          <PortalLogo logoUrl={branding.logoUrl} logoWidthPx={branding.logoWidthPx} />
           <h1 style={styles.heading}>Return request submitted</h1>
           <p style={styles.subheading}>We've notified our team. You'll hear back once it's reviewed.</p>
           <p style={{ fontSize: 14 }}>
@@ -197,6 +204,7 @@ function StatusScreen({
       <div style={styles.page}>
         <style>{PORTAL_ANIMATION_CSS}</style>
         <div style={styles.card} className="portal-card">
+          <PortalLogo logoUrl={branding.logoUrl} logoWidthPx={branding.logoWidthPx} />
           <h1 style={styles.heading}>Return request not approved</h1>
           <p style={styles.subheading}>
             {returnRequest.adminNote || "We're sorry, we're unable to approve this return request."}
@@ -219,6 +227,7 @@ function StatusScreen({
     <div style={styles.page}>
       <style>{PORTAL_ANIMATION_CSS}</style>
       <div style={styles.card} className="portal-card">
+        <PortalLogo logoUrl={branding.logoUrl} logoWidthPx={branding.logoWidthPx} />
         <p style={styles.breadcrumb}>Order {returnRequest.orderName}</p>
         <h1 style={styles.heading}>Your return status</h1>
         <p style={{ fontSize: 14, marginBottom: 16 }}>
@@ -289,7 +298,7 @@ function StatusScreen({
 }
 
 export default function SummaryStep() {
-  const { returnRequest, refundBreakdown, exchangeFulfillmentStatus } = useLoaderData<typeof loader>();
+  const { returnRequest, refundBreakdown, exchangeFulfillmentStatus, branding } = useLoaderData<typeof loader>();
   const navigation = useNavigation();
   const isSubmitting = navigation.state === "submitting";
 
@@ -300,6 +309,7 @@ export default function SummaryStep() {
         returnRequest={returnRequest}
         hasExchange={hasExchange}
         exchangeFulfillmentStatus={exchangeFulfillmentStatus}
+        branding={branding}
       />
     );
   }
@@ -312,6 +322,7 @@ export default function SummaryStep() {
     <div style={styles.page}>
       <style>{PORTAL_ANIMATION_CSS}</style>
       <div style={styles.card} className="portal-card">
+        <PortalLogo logoUrl={branding.logoUrl} logoWidthPx={branding.logoWidthPx} />
         <p style={styles.breadcrumb}>Order {returnRequest.orderName}</p>
         <h1 style={styles.heading}>Review your return</h1>
         <p style={styles.subheading}>Double-check everything below, then submit your request.</p>

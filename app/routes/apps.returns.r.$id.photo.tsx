@@ -11,6 +11,8 @@ import db from "../db.server";
 import { loadReturnRequestOrThrow } from "../lib/wizard.server";
 import { uploadReturnPhoto, PhotoUploadError } from "../lib/photo-upload.server";
 import { portalStyles as styles, PORTAL_ANIMATION_CSS } from "../lib/portal-styles";
+import { getPortalBranding } from "../lib/portal-branding.server";
+import { PortalLogo } from "../components/PortalLogo";
 
 const MAX_PHOTO_BYTES = 8 * 1024 * 1024;
 
@@ -26,7 +28,8 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     throw redirect(`/apps/returns/r/${returnRequest.id}/condition`);
   }
 
-  return { returnRequest };
+  const branding = await getPortalBranding(session.shop);
+  return { returnRequest, branding };
 };
 
 export const action = async ({ request, params }: ActionFunctionArgs) => {
@@ -83,7 +86,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 };
 
 export default function PhotoStep() {
-  const { returnRequest } = useLoaderData<typeof loader>();
+  const { returnRequest, branding } = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   const navigation = useNavigation();
   const isSubmitting = navigation.state === "submitting";
@@ -93,6 +96,7 @@ export default function PhotoStep() {
     <div style={styles.page}>
       <style>{PORTAL_ANIMATION_CSS}</style>
       <div style={styles.card} className="portal-card">
+        <PortalLogo logoUrl={branding.logoUrl} logoWidthPx={branding.logoWidthPx} />
         <p style={styles.breadcrumb}>Order {returnRequest.orderName}</p>
         <h1 style={styles.heading}>Please share a picture showing the perfume is not used</h1>
         <p style={styles.subheading}>

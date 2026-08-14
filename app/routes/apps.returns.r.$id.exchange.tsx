@@ -11,6 +11,8 @@ import {
 } from "../lib/shopify-catalog.server";
 import { calculatePriceDifference } from "../lib/exchange.server";
 import { portalStyles as styles, PORTAL_ANIMATION_CSS } from "../lib/portal-styles";
+import { getPortalBranding } from "../lib/portal-branding.server";
+import { PortalLogo } from "../components/PortalLogo";
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.public.appProxy(request);
@@ -34,7 +36,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const searchItemId = url.searchParams.get("forItem");
   const searchTerm = url.searchParams.get("q") ?? "";
 
-  const [upsellPicks, exchangeSelections, searchResults] = await Promise.all([
+  const [upsellPicks, exchangeSelections, searchResults, branding] = await Promise.all([
     db.exchangeUpsellProduct.findMany({
       where: { shopDomain: session.shop, isActive: true },
       orderBy: { sortOrder: "asc" },
@@ -43,6 +45,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       where: { returnRequestLineItemId: { in: returnRequest.lineItems.map((li) => li.id) } },
     }),
     searchItemId && searchTerm ? searchCatalogProducts(admin, searchTerm) : Promise.resolve([]),
+    getPortalBranding(session.shop),
   ]);
 
   const upsellProducts = await getCatalogProductsByIds(
@@ -50,7 +53,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     upsellPicks.map((p) => p.shopifyProductId),
   );
 
-  return { returnRequest, upsellProducts, exchangeSelections, searchItemId, searchTerm, searchResults };
+  return { returnRequest, upsellProducts, exchangeSelections, searchItemId, searchTerm, searchResults, branding };
 };
 
 export const action = async ({ request, params }: ActionFunctionArgs) => {
@@ -122,7 +125,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 };
 
 export default function ExchangeStep() {
-  const { returnRequest, upsellProducts, exchangeSelections, searchItemId, searchTerm, searchResults } =
+  const { returnRequest, upsellProducts, exchangeSelections, searchItemId, searchTerm, searchResults, branding } =
     useLoaderData<typeof loader>();
   const navigation = useNavigation();
   const isSubmitting = navigation.state === "submitting";
@@ -132,6 +135,7 @@ export default function ExchangeStep() {
     <div style={styles.page}>
       <style>{PORTAL_ANIMATION_CSS}</style>
       <div style={styles.card} className="portal-card">
+        <PortalLogo logoUrl={branding.logoUrl} logoWidthPx={branding.logoWidthPx} />
         <p style={styles.breadcrumb}>Order {returnRequest.orderName}</p>
         <h1 style={styles.heading}>Want to exchange instead of a refund?</h1>
         <p style={styles.subheading}>

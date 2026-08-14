@@ -6,6 +6,7 @@ import {
   type ReturnableItem,
   type OrderLineItemForDiscount,
 } from "./shopify-admin.server";
+import { splitByExclusionRules } from "./return-exclusions.server";
 
 export const GENERIC_NOT_FOUND_MESSAGE =
   "We couldn't find a matching order. Please double-check your order number and email or phone number, then try again.";
@@ -15,6 +16,7 @@ export type OrderLookupResponse =
       eligible: true;
       order: { id: string; name: string; createdAt: string };
       items: ReturnableItem[];
+      excludedItems: ReturnableItem[];
       discountApplications: DiscountApplicationSummary[];
       allLineItems: OrderLineItemForDiscount[];
     }
@@ -37,7 +39,10 @@ export async function performOrderLookup(
     return { eligible: false, error: GENERIC_NOT_FOUND_MESSAGE };
   }
 
-  const shopSettings = await db.shopSettings.findUnique({ where: { shopDomain } });
+  const [shopSettings, exclusionRules] = await Promise.all([
+    db.shopSettings.findUnique({ where: { shopDomain } }),
+    db.returnExclusion.findMany({ where: { shopDomain } }),
+  ]);
   const returnWindowDays = shopSettings?.returnWindowDays ?? 30;
   const orderAgeMs = Date.now() - new Date(order.createdAt).getTime();
   const withinReturnWindow = orderAgeMs <= returnWindowDays * 24 * 60 * 60 * 1000;
@@ -46,9 +51,14 @@ export async function performOrderLookup(
     return {
       eligible: false,
       error:
-        "This order has no items eligible for return. This can happen if the return window has passed, items are marked final sale, or everything has already been returned.",
+        "This order has no items eligible for return. This can happen if the return window has passed or everything has already been returned.",
     };
   }
+
+  // Shown frozen/"Non-returnable" in the wizard rather than hidden, so a
+  // customer who expects to find an item there sees why, instead of a
+  // silent gap that reads like a bug.
+  const { eligible, excluded } = splitByExclusionRules(order.returnableItems, exclusionRules);
 
   if (shopSettings?.maxReturnsPerOrder != null) {
     // Counts submitted requests, not items -- a customer can still return
@@ -71,7 +81,8 @@ export async function performOrderLookup(
   return {
     eligible: true,
     order: { id: order.id, name: order.name, createdAt: order.createdAt },
-    items: order.returnableItems,
+    items: eligible,
+    excludedItems: excluded,
     discountApplications: order.discountApplications,
     allLineItems: order.allLineItems,
   };
@@ -79,6 +90,7 @@ export async function performOrderLookup(
 
 export type OrderSnapshot = {
   items: ReturnableItem[];
+  excludedItems: ReturnableItem[];
   discountApplications: DiscountApplicationSummary[];
   allLineItems: OrderLineItemForDiscount[];
   // Needed to match a DiscountRule's optional validFrom/validUntil campaign
@@ -95,6 +107,7 @@ export async function createDraftReturnRequest(
     email,
     phone,
     items,
+    excludedItems,
     discountApplications,
     allLineItems,
   }: {
@@ -104,11 +117,12 @@ export async function createDraftReturnRequest(
     email?: string;
     phone?: string;
     items: ReturnableItem[];
+    excludedItems: ReturnableItem[];
     discountApplications: DiscountApplicationSummary[];
     allLineItems: OrderLineItemForDiscount[];
   },
 ) {
-  const snapshot: OrderSnapshot = { items, discountApplications, allLineItems, orderCreatedAt };
+  const snapshot: OrderSnapshot = { items, excludedItems, discountApplications, allLineItems, orderCreatedAt };
   return db.returnRequest.create({
     data: {
       shopDomain,

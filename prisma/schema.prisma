@@ -44,8 +44,41 @@ model ShopSettings {
   // can still return several items together in one request). Null means
   // unlimited.
   maxReturnsPerOrder Int?
+  // Shown as the storefront order-number field's placeholder text, e.g.
+  // "#MOD0001" -- purely cosmetic, doesn't affect order lookup itself.
+  orderNumberPlaceholder String?
+  // Portal branding, all optional (falls back to plain defaults if unset).
+  // logoUrl is the resolved CDN URL, captured once at upload time so every
+  // storefront page load is a plain DB read, not a live Shopify Files call.
+  logoUrl          String?
+  logoWidthPx      Int?
+  pageTitle        String?
+  introDescription String?
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
+}
+
+enum ExclusionType {
+  PRODUCT
+  COLLECTION
+}
+
+// App-level non-returnable list. Shopify's native "final sale" return
+// rules (Settings -> Policies) are NOT readable via the Admin GraphQL API
+// and are not reflected in returnableFulfillments (that field mirrors
+// staff permissions, which can return final-sale items) -- confirmed via
+// Shopify's own developer community. So this app has to track and enforce
+// its own exclusion list rather than deferring to Shopify's config.
+model ReturnExclusion {
+  id                String        @id @default(cuid())
+  shopDomain        String
+  type              ExclusionType
+  shopifyResourceId String
+  title             String
+  createdAt         DateTime      @default(now())
+
+  @@unique([shopDomain, shopifyResourceId])
+  @@index([shopDomain])
 }
 
 enum ConditionAction {

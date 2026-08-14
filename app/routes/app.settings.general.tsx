@@ -19,11 +19,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const supportEmail = String(formData.get("supportEmail") ?? "").trim() || null;
   const returnPolicyUrl = String(formData.get("returnPolicyUrl") ?? "").trim() || null;
   const returnWindowDays = Number(formData.get("returnWindowDays") ?? 30);
+  const orderNumberPlaceholder = String(formData.get("orderNumberPlaceholder") ?? "").trim() || null;
 
   await db.shopSettings.upsert({
     where: { shopDomain: session.shop },
-    update: { supportEmail, returnPolicyUrl, returnWindowDays },
-    create: { shopDomain: session.shop, supportEmail, returnPolicyUrl, returnWindowDays },
+    update: { supportEmail, returnPolicyUrl, returnWindowDays, orderNumberPlaceholder },
+    create: { shopDomain: session.shop, supportEmail, returnPolicyUrl, returnWindowDays, orderNumberPlaceholder },
   });
 
   return { ok: true };
@@ -37,6 +38,7 @@ export default function GeneralSettings() {
   const [supportEmail, setSupportEmail] = useState(settings?.supportEmail ?? "");
   const [returnPolicyUrl, setReturnPolicyUrl] = useState(settings?.returnPolicyUrl ?? "");
   const [returnWindowDays, setReturnWindowDays] = useState(settings?.returnWindowDays?.toString() ?? "30");
+  const [orderNumberPlaceholder, setOrderNumberPlaceholder] = useState(settings?.orderNumberPlaceholder ?? "");
 
   useEffect(() => {
     if (fetcher.state === "idle" && fetcher.data?.ok) {
@@ -45,7 +47,7 @@ export default function GeneralSettings() {
   }, [fetcher.state, fetcher.data, shopify]);
 
   const save = () => {
-    fetcher.submit({ supportEmail, returnPolicyUrl, returnWindowDays }, { method: "post" });
+    fetcher.submit({ supportEmail, returnPolicyUrl, returnWindowDays, orderNumberPlaceholder }, { method: "post" });
   };
 
   return (
@@ -78,6 +80,14 @@ export default function GeneralSettings() {
                 type="number"
                 value={returnWindowDays}
                 onChange={setReturnWindowDays}
+                autoComplete="off"
+              />
+              <TextField
+                label="Order number field placeholder"
+                helpText='Shown as greyed-out example text in the storefront order-number field, e.g. "#MOD0001". Purely cosmetic -- customers still type their own order number.'
+                value={orderNumberPlaceholder}
+                onChange={setOrderNumberPlaceholder}
+                placeholder="#1001"
                 autoComplete="off"
               />
               <Button variant="primary" onClick={save} loading={fetcher.state === "submitting"}>

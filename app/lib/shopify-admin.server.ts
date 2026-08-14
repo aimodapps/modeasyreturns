@@ -9,6 +9,8 @@ export type ReturnableItem = {
   unitPrice: string;
   currencyCode: string;
   imageUrl: string | null;
+  productId: string | null;
+  collectionIds: string[];
 };
 
 export type DiscountApplicationSummary = {
@@ -115,6 +117,14 @@ const RETURNABLE_FULFILLMENTS_QUERY = `#graphql
                 }
                 image {
                   url
+                }
+                product {
+                  id
+                  collections(first: 25) {
+                    nodes {
+                      id
+                    }
+                  }
                 }
               }
             }
@@ -226,9 +236,15 @@ export async function findOrderForReturnLookup(
 }
 
 /**
- * Sources eligible items from Shopify's own returnableFulfillments computation
- * rather than raw line items, so products the merchant marked non-returnable
- * (or already fully returned) are excluded automatically.
+ * Sources eligible items from Shopify's own returnableFulfillments
+ * computation rather than raw line items, so already-fully-returned items
+ * are excluded automatically. This does NOT exclude "final sale" products
+ * -- confirmed via Shopify's own dev community that returnableFulfillments
+ * mirrors staff permissions (who CAN return final-sale items), not the
+ * customer-facing return-rules restriction, and that restriction isn't
+ * exposed via the Admin API at all. Each item's productId/collectionIds
+ * are included here so the caller can cross-reference them against this
+ * app's own ReturnExclusion list instead.
  */
 async function getReturnableItems(
   admin: AdminApiContext,
@@ -254,6 +270,8 @@ async function getReturnableItems(
         unitPrice: lineItem.discountedUnitPriceSet?.shopMoney?.amount ?? "0.00",
         currencyCode: lineItem.discountedUnitPriceSet?.shopMoney?.currencyCode ?? "USD",
         imageUrl: lineItem.image?.url ?? null,
+        productId: lineItem.product?.id ?? null,
+        collectionIds: (lineItem.product?.collections?.nodes ?? []).map((c: any) => c.id),
       });
     }
   }

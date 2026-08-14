@@ -5,6 +5,8 @@ import { authenticate } from "../shopify.server";
 import db from "../db.server";
 import { loadReturnRequestOrThrow } from "../lib/wizard.server";
 import { portalStyles as styles, PORTAL_ANIMATION_CSS } from "../lib/portal-styles";
+import { getPortalBranding } from "../lib/portal-branding.server";
+import { PortalLogo } from "../components/PortalLogo";
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const { session } = await authenticate.public.appProxy(request);
@@ -21,12 +23,15 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     throw redirect(`/apps/returns/r/${returnRequest.id}/photo`);
   }
 
-  const reasons = await db.returnReason.findMany({
-    where: { shopDomain: session.shop, isActive: true },
-    orderBy: { sortOrder: "asc" },
-  });
+  const [reasons, branding] = await Promise.all([
+    db.returnReason.findMany({
+      where: { shopDomain: session.shop, isActive: true },
+      orderBy: { sortOrder: "asc" },
+    }),
+    getPortalBranding(session.shop),
+  ]);
 
-  return { returnRequest, reasons };
+  return { returnRequest, reasons, branding };
 };
 
 export const action = async ({ request, params }: ActionFunctionArgs) => {
@@ -54,7 +59,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 };
 
 export default function ReasonStep() {
-  const { returnRequest, reasons } = useLoaderData<typeof loader>();
+  const { returnRequest, reasons, branding } = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   const navigation = useNavigation();
   const isSubmitting = navigation.state === "submitting";
@@ -71,6 +76,7 @@ export default function ReasonStep() {
         .reason-option:has(.reason-radio:checked) { border-color: #1a1a1a; background: #fafafa; }
       `}</style>
       <div style={styles.card} className="portal-card">
+        <PortalLogo logoUrl={branding.logoUrl} logoWidthPx={branding.logoWidthPx} />
         <p style={styles.breadcrumb}>Order {returnRequest.orderName}</p>
         <h1 style={styles.heading}>Why are you returning this?</h1>
         <p style={styles.subheading}>Choose the reason that best matches your situation.</p>

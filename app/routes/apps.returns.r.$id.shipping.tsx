@@ -6,6 +6,8 @@ import db from "../db.server";
 import { loadReturnRequestOrThrow } from "../lib/wizard.server";
 import { quoteShippingFees } from "../lib/fees.server";
 import { portalStyles as styles, PORTAL_ANIMATION_CSS } from "../lib/portal-styles";
+import { getPortalBranding } from "../lib/portal-branding.server";
+import { PortalLogo } from "../components/PortalLogo";
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const { session } = await authenticate.public.appProxy(request);
@@ -31,9 +33,12 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   );
   const itemCount = returnRequest.lineItems.reduce((sum, li) => sum + li.quantity, 0);
 
-  const quote = await quoteShippingFees(session.shop, { refundBaseAmount, itemCount });
+  const [quote, branding] = await Promise.all([
+    quoteShippingFees(session.shop, { refundBaseAmount, itemCount }),
+    getPortalBranding(session.shop),
+  ]);
 
-  return { returnRequest, quote };
+  return { returnRequest, quote, branding };
 };
 
 export const action = async ({ request, params }: ActionFunctionArgs) => {
@@ -63,7 +68,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 };
 
 export default function ShippingStep() {
-  const { returnRequest, quote } = useLoaderData<typeof loader>();
+  const { returnRequest, quote, branding } = useLoaderData<typeof loader>();
   const navigation = useNavigation();
   const isSubmitting = navigation.state === "submitting";
   const currency = returnRequest.lineItems[0]?.currencyCode ?? "";
@@ -72,6 +77,7 @@ export default function ShippingStep() {
     <div style={styles.page}>
       <style>{PORTAL_ANIMATION_CSS}</style>
       <div style={styles.card} className="portal-card">
+        <PortalLogo logoUrl={branding.logoUrl} logoWidthPx={branding.logoWidthPx} />
         <p style={styles.breadcrumb}>Order {returnRequest.orderName}</p>
         <h1 style={styles.heading}>How would you like to ship it back?</h1>
         <p style={styles.subheading}>Choose one of the options below to continue.</p>

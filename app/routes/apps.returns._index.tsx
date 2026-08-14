@@ -10,14 +10,17 @@ import {
   type OrderLookupResponse,
 } from "../lib/order-lookup.server";
 import { portalStyles as styles, PORTAL_ANIMATION_CSS } from "../lib/portal-styles";
+import { getPortalBranding } from "../lib/portal-branding.server";
+import { PortalLogo } from "../components/PortalLogo";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  await authenticate.public.appProxy(request);
+  const { session } = await authenticate.public.appProxy(request);
   const url = new URL(request.url);
+  const branding = session ? await getPortalBranding(session.shop) : null;
   // Lets a deep link (e.g. from a customer account order page) prefill the
   // order number -- the customer still has to enter a matching email/phone
   // themselves, so this doesn't weaken identity verification at all.
-  return { prefillOrderNumber: url.searchParams.get("order") ?? "" };
+  return { prefillOrderNumber: url.searchParams.get("order") ?? "", branding };
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
@@ -77,6 +80,7 @@ async function handleAction(request: Request) {
     email,
     phone,
     items: result.items,
+    excludedItems: result.excludedItems,
     discountApplications: result.discountApplications,
     allLineItems: result.allLineItems,
   });
@@ -85,7 +89,7 @@ async function handleAction(request: Request) {
 }
 
 export default function ReturnsPortal() {
-  const { prefillOrderNumber } = useLoaderData<typeof loader>();
+  const { prefillOrderNumber, branding } = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   const navigation = useNavigation();
   const isSubmitting = navigation.state === "submitting";
@@ -94,9 +98,10 @@ export default function ReturnsPortal() {
     <div style={styles.page}>
       <style>{PORTAL_ANIMATION_CSS}</style>
       <div style={styles.card} className="portal-card">
-        <h1 style={styles.heading}>Start a return or exchange</h1>
+        <PortalLogo logoUrl={branding?.logoUrl ?? null} logoWidthPx={branding?.logoWidthPx ?? null} />
+        <h1 style={styles.heading}>{branding?.pageTitle || "Start a return or exchange"}</h1>
         <p style={styles.subheading}>
-          Enter your order number and the email or phone number used at checkout.
+          {branding?.introDescription || "Enter your order number and the email or phone number used at checkout."}
         </p>
 
         <Form method="post" action="/apps/returns" style={styles.form}>
@@ -106,7 +111,7 @@ export default function ReturnsPortal() {
               style={styles.input}
               type="text"
               name="orderNumber"
-              placeholder="#1001"
+              placeholder={branding?.orderNumberPlaceholder || "#1001"}
               defaultValue={prefillOrderNumber}
               required
             />

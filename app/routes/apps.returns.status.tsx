@@ -7,11 +7,14 @@ import { isRateLimited } from "../lib/rate-limit.server";
 import { findOrderForReturnLookup } from "../lib/shopify-admin.server";
 import { GENERIC_NOT_FOUND_MESSAGE } from "../lib/order-lookup.server";
 import { portalStyles as styles, PORTAL_ANIMATION_CSS } from "../lib/portal-styles";
+import { getPortalBranding } from "../lib/portal-branding.server";
+import { PortalLogo } from "../components/PortalLogo";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  await authenticate.public.appProxy(request);
+  const { session } = await authenticate.public.appProxy(request);
   const url = new URL(request.url);
-  return { prefillOrderNumber: url.searchParams.get("order") ?? "" };
+  const branding = session ? await getPortalBranding(session.shop) : null;
+  return { prefillOrderNumber: url.searchParams.get("order") ?? "", branding };
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
@@ -66,7 +69,7 @@ async function handleAction(request: Request) {
 }
 
 export default function ReturnStatusLookup() {
-  const { prefillOrderNumber } = useLoaderData<typeof loader>();
+  const { prefillOrderNumber, branding } = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   const navigation = useNavigation();
   const isSubmitting = navigation.state === "submitting";
@@ -75,6 +78,7 @@ export default function ReturnStatusLookup() {
     <div style={styles.page}>
       <style>{PORTAL_ANIMATION_CSS}</style>
       <div style={styles.card} className="portal-card">
+        <PortalLogo logoUrl={branding?.logoUrl ?? null} logoWidthPx={branding?.logoWidthPx ?? null} />
         <h1 style={styles.heading}>Check your return status</h1>
         <p style={styles.subheading}>
           Enter your order number and the email or phone number used at checkout to see the latest status of your
@@ -88,7 +92,7 @@ export default function ReturnStatusLookup() {
               style={styles.input}
               type="text"
               name="orderNumber"
-              placeholder="#1001"
+              placeholder={branding?.orderNumberPlaceholder || "#1001"}
               defaultValue={prefillOrderNumber}
               required
             />

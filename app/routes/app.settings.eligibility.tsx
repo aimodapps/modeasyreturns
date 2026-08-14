@@ -1,20 +1,65 @@
 import { useEffect, useState } from "react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
-import { useFetcher, useLoaderData } from "@remix-run/react";
-import { Page, Layout, Card, BlockStack, Text, TextField, Button, Link } from "@shopify/polaris";
+import { Form, useFetcher, useLoaderData } from "@remix-run/react";
+import {
+  Page,
+  Layout,
+  Card,
+  BlockStack,
+  InlineStack,
+  Text,
+  TextField,
+  Button,
+  Badge,
+  Thumbnail,
+  Box,
+} from "@shopify/polaris";
 import { TitleBar, useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import db from "../db.server";
+import { searchCatalogProducts } from "../lib/shopify-catalog.server";
+import { searchCatalogCollections } from "../lib/return-exclusions.server";
+
+const NO_IMAGE = "https://cdn.shopify.com/s/assets/admin/no-image-1c98dd91f9e7f45de9c6a67cad74e39c.gif";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
-  const settings = await db.shopSettings.findUnique({ where: { shopDomain: session.shop } });
-  return { settings };
+  const { admin, session } = await authenticate.admin(request);
+  const url = new URL(request.url);
+  const productQuery = url.searchParams.get("productQuery") ?? "";
+  const collectionQuery = url.searchParams.get("collectionQuery") ?? "";
+
+  const [settings, exclusions, productResults, collectionResults] = await Promise.all([
+    db.shopSettings.findUnique({ where: { shopDomain: session.shop } }),
+    db.returnExclusion.findMany({ where: { shopDomain: session.shop }, orderBy: { createdAt: "desc" } }),
+    productQuery ? searchCatalogProducts(admin, productQuery) : Promise.resolve([]),
+    collectionQuery ? searchCatalogCollections(admin, collectionQuery) : Promise.resolve([]),
+  ]);
+
+  return { settings, exclusions, productResults, collectionResults, productQuery, collectionQuery };
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   const formData = await request.formData();
+  const intent = String(formData.get("intent"));
+
+  if (intent === "addExclusion") {
+    const type = String(formData.get("type")) === "COLLECTION" ? "COLLECTION" : "PRODUCT";
+    const shopifyResourceId = String(formData.get("shopifyResourceId"));
+    const title = String(formData.get("title"));
+    await db.returnExclusion.upsert({
+      where: { shopDomain_shopifyResourceId: { shopDomain: session.shop, shopifyResourceId } },
+      update: { title, type },
+      create: { shopDomain: session.shop, type, shopifyResourceId, title },
+    });
+    return { ok: true as const };
+  }
+
+  if (intent === "removeExclusion") {
+    const id = String(formData.get("id"));
+    await db.returnExclusion.deleteMany({ where: { id, shopDomain: session.shop } });
+    return { ok: true as const };
+  }
 
   const maxReturnsPerOrderRaw = String(formData.get("maxReturnsPerOrder") ?? "").trim();
   const maxReturnsPerOrder = maxReturnsPerOrderRaw ? Number(maxReturnsPerOrderRaw) : null;
@@ -33,11 +78,15 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function EligibilitySettings() {
-  const { settings } = useLoaderData<typeof loader>();
+  const { settings, exclusions, productResults, collectionResults, productQuery, collectionQuery } =
+    useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
+  const listFetcher = useFetcher();
   const shopify = useAppBridge();
 
   const [maxReturnsPerOrder, setMaxReturnsPerOrder] = useState(settings?.maxReturnsPerOrder?.toString() ?? "");
+  const [productSearch, setProductSearch] = useState(productQuery);
+  const [collectionSearch, setCollectionSearch] = useState(collectionQuery);
 
   useEffect(() => {
     if (fetcher.state === "idle" && fetcher.data?.ok) {
@@ -47,6 +96,16 @@ export default function EligibilitySettings() {
 
   const save = () => {
     fetcher.submit({ maxReturnsPerOrder }, { method: "post" });
+  };
+
+  const excludedResourceIds = new Set(exclusions.map((e) => e.shopifyResourceId));
+
+  const addExclusion = (type: "PRODUCT" | "COLLECTION", shopifyResourceId: string, title: string) => {
+    listFetcher.submit({ intent: "addExclusion", type, shopifyResourceId, title }, { method: "post" });
+  };
+
+  const removeExclusion = (id: string) => {
+    listFetcher.submit({ intent: "removeExclusion", id }, { method: "post" });
   };
 
   return (
@@ -60,18 +119,113 @@ export default function EligibilitySettings() {
                 Non-returnable products & collections
               </Text>
               <Text as="p" tone="subdued">
-                This app always follows Shopify's own final sale / return rules -- whatever products or
-                collections you exclude there are automatically excluded from the return and exchange
-                wizard here too. There's no separate list to maintain in this app.
+                Shopify's own "final sale" return rules (Settings → Policies) aren't readable through
+                the API this app uses, so they can't be relied on here -- anything you mark final sale
+                there will still show as returnable in this wizard unless it's also added below. Items
+                added here show in the wizard as disabled with a "Non-returnable" label, rather than
+                being hidden, so a customer who expects to find something there sees why.
               </Text>
-              <Text as="p">
-                <Link url="shopify:admin/settings/legal" target="_blank">
-                  Manage final sale products & collections in Settings → Policies
-                </Link>
-              </Text>
+
+              {exclusions.length === 0 && (
+                <Text as="p" tone="subdued">
+                  No products or collections excluded yet.
+                </Text>
+              )}
+              {exclusions.map((e) => (
+                <InlineStack key={e.id} align="space-between" blockAlign="center">
+                  <InlineStack gap="300" blockAlign="center">
+                    <Badge>{e.type === "PRODUCT" ? "Product" : "Collection"}</Badge>
+                    <Text as="span">{e.title}</Text>
+                  </InlineStack>
+                  <Button variant="plain" tone="critical" onClick={() => removeExclusion(e.id)}>
+                    Remove
+                  </Button>
+                </InlineStack>
+              ))}
             </BlockStack>
           </Card>
+
+          <Box paddingBlockStart="400">
+            <Card>
+              <BlockStack gap="400">
+                <Text as="h2" variant="headingMd">
+                  Add a product
+                </Text>
+                <Form method="get">
+                  <input type="hidden" name="collectionQuery" value={collectionQuery} />
+                  <TextField
+                    label="Search products by title"
+                    labelHidden
+                    name="productQuery"
+                    value={productSearch}
+                    onChange={setProductSearch}
+                    autoComplete="off"
+                    placeholder="Search products…"
+                    connectedRight={<Button submit>Search</Button>}
+                  />
+                </Form>
+
+                {productResults.map((product) => (
+                  <InlineStack key={product.id} align="space-between" blockAlign="center">
+                    <InlineStack gap="300" blockAlign="center">
+                      <Thumbnail source={product.imageUrl || NO_IMAGE} alt={product.title} size="small" />
+                      <Text as="span">{product.title}</Text>
+                    </InlineStack>
+                    {excludedResourceIds.has(product.id) ? (
+                      <Text as="span" tone="subdued">
+                        Excluded
+                      </Text>
+                    ) : (
+                      <Button onClick={() => addExclusion("PRODUCT", product.id, product.title)}>Exclude</Button>
+                    )}
+                  </InlineStack>
+                ))}
+              </BlockStack>
+            </Card>
+          </Box>
+
+          <Box paddingBlockStart="400">
+            <Card>
+              <BlockStack gap="400">
+                <Text as="h2" variant="headingMd">
+                  Add a collection
+                </Text>
+                <Form method="get">
+                  <input type="hidden" name="productQuery" value={productQuery} />
+                  <TextField
+                    label="Search collections by title"
+                    labelHidden
+                    name="collectionQuery"
+                    value={collectionSearch}
+                    onChange={setCollectionSearch}
+                    autoComplete="off"
+                    placeholder="Search collections…"
+                    connectedRight={<Button submit>Search</Button>}
+                  />
+                </Form>
+
+                {collectionResults.map((collection) => (
+                  <InlineStack key={collection.id} align="space-between" blockAlign="center">
+                    <InlineStack gap="300" blockAlign="center">
+                      <Thumbnail source={collection.imageUrl || NO_IMAGE} alt={collection.title} size="small" />
+                      <Text as="span">{collection.title}</Text>
+                    </InlineStack>
+                    {excludedResourceIds.has(collection.id) ? (
+                      <Text as="span" tone="subdued">
+                        Excluded
+                      </Text>
+                    ) : (
+                      <Button onClick={() => addExclusion("COLLECTION", collection.id, collection.title)}>
+                        Exclude
+                      </Button>
+                    )}
+                  </InlineStack>
+                ))}
+              </BlockStack>
+            </Card>
+          </Box>
         </Layout.Section>
+
         <Layout.Section>
           <Card>
             <BlockStack gap="400">

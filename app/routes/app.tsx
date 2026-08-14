@@ -26,6 +26,7 @@ export default function App() {
         </Link>
         <Link to="/app/returns">Return requests</Link>
         <Link to="/app/settings/general">General settings</Link>
+        <Link to="/app/settings/branding">Branding</Link>
         <Link to="/app/settings/eligibility">Eligibility</Link>
         <Link to="/app/settings/conditions">Item conditions</Link>
         <Link to="/app/settings/reasons">Return reasons</Link>
