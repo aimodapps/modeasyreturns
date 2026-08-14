@@ -80,22 +80,66 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     .slice(0, 5)
     .map(([label, count]) => ({ label, count }));
 
-  const [pendingReviewCount, awaitingReceiptCount, balanceDueCount, failedNotificationCount, shopSettings, activeConditionCount, activeReasonCount, recent] =
-    await Promise.all([
-      db.returnRequest.count({ where: { shopDomain, status: "PENDING_REVIEW" } }),
-      db.returnRequest.count({ where: { shopDomain, status: "APPROVED", lifecycleStage: "AWAITING_RECEIPT" } }),
-      db.returnRequest.count({ where: { shopDomain, status: "APPROVED", lifecycleStage: "BALANCE_DUE" } }),
-      db.adminNotificationLog.count({ where: { status: "FAILED", returnRequest: { shopDomain } } }),
-      db.shopSettings.findUnique({ where: { shopDomain } }),
-      db.conditionOption.count({ where: { shopDomain, isActive: true } }),
-      db.returnReason.count({ where: { shopDomain, isActive: true } }),
-      db.returnRequest.findMany({
-        where: { shopDomain, status: { not: "DRAFT" } },
-        orderBy: { submittedAt: "desc" },
-        take: 8,
-        select: { id: true, orderName: true, customerEmail: true, status: true, lifecycleStage: true, submittedAt: true },
-      }),
-    ]);
+  // No productId is stored on ReturnRequestLineItem (only the title/variant
+  // snapshotted at return time), so products are grouped by title+variant
+  // text -- fine in practice since product names are stable and distinct.
+  const productCounts = new Map<string, { title: string; variantTitle: string | null; quantity: number; requests: number }>();
+  for (const r of requestsInRange) {
+    for (const li of r.lineItems) {
+      const key = `${li.title}::${li.variantTitle ?? ""}`;
+      const existing = productCounts.get(key);
+      if (existing) {
+        existing.quantity += li.quantity;
+        existing.requests += 1;
+      } else {
+        productCounts.set(key, { title: li.title, variantTitle: li.variantTitle, quantity: li.quantity, requests: 1 });
+      }
+    }
+  }
+  const topProducts = [...productCounts.values()].sort((a, b) => b.quantity - a.quantity).slice(0, 5);
+
+  const REPEAT_RETURNER_THRESHOLD = 3;
+  const [
+    pendingReviewCount,
+    awaitingReceiptCount,
+    balanceDueCount,
+    failedNotificationCount,
+    shopSettings,
+    activeConditionCount,
+    activeReasonCount,
+    recent,
+    repeatReturnerGroups,
+  ] = await Promise.all([
+    db.returnRequest.count({ where: { shopDomain, status: "PENDING_REVIEW" } }),
+    db.returnRequest.count({ where: { shopDomain, status: "APPROVED", lifecycleStage: "AWAITING_RECEIPT" } }),
+    db.returnRequest.count({ where: { shopDomain, status: "APPROVED", lifecycleStage: "BALANCE_DUE" } }),
+    db.adminNotificationLog.count({ where: { status: "FAILED", returnRequest: { shopDomain } } }),
+    db.shopSettings.findUnique({ where: { shopDomain } }),
+    db.conditionOption.count({ where: { shopDomain, isActive: true } }),
+    db.returnReason.count({ where: { shopDomain, isActive: true } }),
+    db.returnRequest.findMany({
+      where: { shopDomain, status: { not: "DRAFT" } },
+      orderBy: { submittedAt: "desc" },
+      take: 8,
+      select: { id: true, orderName: true, customerEmail: true, status: true, lifecycleStage: true, submittedAt: true },
+    }),
+    // All-time, not range-scoped -- repeat-returner status is a customer
+    // trait, not something that should reset just because a shorter date
+    // range is selected.
+    db.returnRequest.groupBy({
+      by: ["customerEmail"],
+      where: { shopDomain, status: { not: "DRAFT" }, customerEmail: { not: null } },
+      _count: { customerEmail: true },
+      having: { customerEmail: { _count: { gte: REPEAT_RETURNER_THRESHOLD } } },
+      orderBy: { _count: { customerEmail: "desc" } },
+      take: 10,
+    }),
+  ]);
+
+  const repeatReturners = repeatReturnerGroups.map((g) => ({
+    email: g.customerEmail as string,
+    count: g._count.customerEmail,
+  }));
 
   return {
     range: rangeParam,
@@ -109,6 +153,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     exchangeCount,
     plainReturnCount,
     topReasons,
+    topProducts,
+    repeatReturners,
     todos: {
       pendingReviewCount,
       awaitingReceiptCount,
@@ -303,6 +349,61 @@ export default function Dashboard() {
                     {data.stillPending} of the requests received in this range are still awaiting a decision.
                   </Text>
                 )}
+              </BlockStack>
+            </Card>
+          </Layout.Section>
+
+          <Layout.Section variant="oneHalf">
+            <Card>
+              <BlockStack gap="300">
+                <Text as="h2" variant="headingMd">
+                  Top returned products
+                </Text>
+                <Text as="p" tone="subdued">
+                  Grouped by product/variant title, this range.
+                </Text>
+                {data.topProducts.length === 0 && (
+                  <Text as="p" tone="subdued">
+                    No returns in this range yet.
+                  </Text>
+                )}
+                {data.topProducts.map((p) => (
+                  <InlineStack key={`${p.title}::${p.variantTitle ?? ""}`} align="space-between">
+                    <Text as="span">
+                      {p.title}
+                      {p.variantTitle ? ` — ${p.variantTitle}` : ""}
+                    </Text>
+                    <Text as="span" tone="subdued">
+                      {p.quantity} unit{p.quantity === 1 ? "" : "s"}
+                    </Text>
+                  </InlineStack>
+                ))}
+              </BlockStack>
+            </Card>
+          </Layout.Section>
+
+          <Layout.Section variant="oneHalf">
+            <Card>
+              <BlockStack gap="300">
+                <Text as="h2" variant="headingMd">
+                  Repeat returners
+                </Text>
+                <Text as="p" tone="subdued">
+                  Customers with 3+ return requests all-time -- not limited to the selected range.
+                </Text>
+                {data.repeatReturners.length === 0 && (
+                  <Text as="p" tone="subdued">
+                    No customers have returned 3 or more times yet.
+                  </Text>
+                )}
+                {data.repeatReturners.map((c) => (
+                  <RemixLink key={c.email} to={`/app/returns?email=${encodeURIComponent(c.email)}`} style={{ textDecoration: "none" }}>
+                    <InlineStack align="space-between">
+                      <Text as="span">{c.email}</Text>
+                      <Badge tone="warning">{`${c.count} requests`}</Badge>
+                    </InlineStack>
+                  </RemixLink>
+                ))}
               </BlockStack>
             </Card>
           </Layout.Section>

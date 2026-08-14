@@ -50,6 +50,24 @@ export async function performOrderLookup(
     };
   }
 
+  if (shopSettings?.maxReturnsPerOrder != null) {
+    // Counts submitted requests, not items -- a customer can still return
+    // several items together in one request; this only limits how many
+    // separate requests can be opened against the same order.
+    const existingRequestCount = await db.returnRequest.count({
+      where: { shopDomain, orderId: order.id, status: { not: "DRAFT" } },
+    });
+    if (existingRequestCount >= shopSettings.maxReturnsPerOrder) {
+      return {
+        eligible: false,
+        error:
+          existingRequestCount === 1
+            ? "A return or exchange request has already been submitted for this order. Please contact us if you need further assistance."
+            : "This order has already reached the maximum number of return or exchange requests allowed. Please contact us if you need further assistance.",
+      };
+    }
+  }
+
   return {
     eligible: true,
     order: { id: order.id, name: order.name, createdAt: order.createdAt },

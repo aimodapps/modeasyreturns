@@ -29,24 +29,27 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const url = new URL(request.url);
   const statusParam = url.searchParams.get("status");
   const stageParam = url.searchParams.get("stage");
+  const emailParam = url.searchParams.get("email");
   const statusFilter = VALID_STATUSES.find((s) => s === statusParam) ?? null;
   const stageFilter = VALID_STAGES.find((s) => s === stageParam) ?? null;
+  const emailFilter = emailParam?.trim() || null;
 
   const requests = await db.returnRequest.findMany({
     where: {
       shopDomain: session.shop,
       status: statusFilter ?? { not: "DRAFT" },
       lifecycleStage: stageFilter ?? undefined,
+      customerEmail: emailFilter ?? undefined,
     },
     include: { lineItems: true },
     orderBy: { submittedAt: "desc" },
     take: 100,
   });
-  return { requests, statusFilter, stageFilter };
+  return { requests, statusFilter, stageFilter, emailFilter };
 };
 
 export default function ReturnsQueue() {
-  const { requests, statusFilter, stageFilter } = useLoaderData<typeof loader>();
+  const { requests, statusFilter, stageFilter, emailFilter } = useLoaderData<typeof loader>();
   const [, setSearchParams] = useSearchParams();
 
   const rowMarkup = requests.map((request, index) => (
@@ -73,7 +76,13 @@ export default function ReturnsQueue() {
     </IndexTable.Row>
   ));
 
-  const filterLabel = stageFilter ? STAGE_LABELS[stageFilter] : statusFilter ? statusFilter.replace("_", " ") : null;
+  const filterLabel = stageFilter
+    ? STAGE_LABELS[stageFilter]
+    : statusFilter
+      ? statusFilter.replace("_", " ")
+      : emailFilter
+        ? emailFilter
+        : null;
 
   return (
     <Page>

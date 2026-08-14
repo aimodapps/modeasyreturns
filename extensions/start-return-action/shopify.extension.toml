@@ -1,0 +1,36 @@
+# Learn more about configuring your Customer account UI extension:
+# https://shopify.dev/api/customer-account-ui-extensions/unstable/configuration
+
+# The version of APIs your extension will receive. Learn more:
+# https://shopify.dev/docs/api/usage/versioning
+api_version = "2026-07"
+
+[[extensions]]
+name = "start-return-action"
+handle = "start-return-action"
+type = "ui_extension"
+uid = "d43795c7-0d63-52eb-b8ba-52de4ce2cc3155f6e1bd"
+
+# Controls where in Shopify your extension will be injected,
+# and the file that contains your extension’s source code. Learn more:
+# https://shopify.dev/docs/api/customer-account-ui-extensions/unstable/extension-targets-overview
+
+# Renders on both the Order index page and the Order status page, per
+# Shopify's docs. Each extension may only declare a given target once, so
+# the "check return status" button lives in a sibling extension
+# (check-return-status-action) instead of a second targeting block here.
+[[extensions.targeting]]
+module = "./src/StartReturnAction.jsx"
+target = "customer-account.order.action.menu-item.render"
+
+[extensions.capabilities]
+# Gives your extension access to directly query Shopify’s storefront API --
+# used here to resolve the shop's primary domain so the button can link to
+# the app's storefront-facing return wizard (an App Proxy route).
+# https://shopify.dev/docs/api/customer-account-ui-extensions/unstable/configuration#api-access
+api_access = true
+
+# Gives your extension access to make external network calls, using the
+# JavaScript `fetch()` API. Learn more:
+# https://shopify.dev/docs/api/customer-account-ui-extensions/unstable/configuration#network-access
+# network_access = true

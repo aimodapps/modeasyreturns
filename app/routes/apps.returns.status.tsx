@@ -1,6 +1,6 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { redirect } from "@remix-run/node";
-import { Form, useActionData, useNavigation } from "@remix-run/react";
+import { Form, useActionData, useLoaderData, useNavigation } from "@remix-run/react";
 import { authenticate } from "../shopify.server";
 import db from "../db.server";
 import { isRateLimited } from "../lib/rate-limit.server";
@@ -10,7 +10,8 @@ import { portalStyles as styles, PORTAL_ANIMATION_CSS } from "../lib/portal-styl
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   await authenticate.public.appProxy(request);
-  return null;
+  const url = new URL(request.url);
+  return { prefillOrderNumber: url.searchParams.get("order") ?? "" };
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
@@ -65,6 +66,7 @@ async function handleAction(request: Request) {
 }
 
 export default function ReturnStatusLookup() {
+  const { prefillOrderNumber } = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   const navigation = useNavigation();
   const isSubmitting = navigation.state === "submitting";
@@ -82,7 +84,14 @@ export default function ReturnStatusLookup() {
         <Form method="post" action="/apps/returns/status" style={styles.form}>
           <label style={styles.label}>
             Order number
-            <input style={styles.input} type="text" name="orderNumber" placeholder="#1001" required />
+            <input
+              style={styles.input}
+              type="text"
+              name="orderNumber"
+              placeholder="#1001"
+              defaultValue={prefillOrderNumber}
+              required
+            />
           </label>
           <label style={styles.label}>
             Email or phone number
