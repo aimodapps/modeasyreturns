@@ -200,10 +200,11 @@ export default function BrandingSettings() {
               />
               <TextField
                 label="Intro description"
+                helpText="Supports basic HTML, e.g. <b>, <a href='...'>, <br>. Rendered as-is on the storefront, so double-check the markup before saving."
                 placeholder="Enter your order number and the email or phone number used at checkout."
                 value={introDescription}
                 onChange={setIntroDescription}
-                multiline={2}
+                multiline={4}
                 autoComplete="off"
               />
               {textFetcher.data && !textFetcher.data.ok && (

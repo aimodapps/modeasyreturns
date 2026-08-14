@@ -100,9 +100,13 @@ export default function ReturnsPortal() {
       <div style={styles.card} className="portal-card">
         <PortalLogo logoUrl={branding?.logoUrl ?? null} logoWidthPx={branding?.logoWidthPx ?? null} />
         <h1 style={styles.heading}>{branding?.pageTitle || "Start a return or exchange"}</h1>
-        <p style={styles.subheading}>
-          {branding?.introDescription || "Enter your order number and the email or phone number used at checkout."}
-        </p>
+        {branding?.introDescription ? (
+          <p style={styles.subheading} dangerouslySetInnerHTML={{ __html: branding.introDescription }} />
+        ) : (
+          <p style={styles.subheading}>
+            Enter your order number and the email or phone number used at checkout.
+          </p>
+        )}
 
         <Form method="post" action="/apps/returns" style={styles.form}>
           <label style={styles.label}>
