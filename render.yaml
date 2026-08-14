@@ -35,7 +35,13 @@ services:
         fromDatabase:
           name: mod-easy-returns-db
           property: connectionString
-      - key: RESEND_API_KEY
+      # Sent via a dedicated Google Workspace mailbox (e.g. returns@modfragrances.com)
+      # using an App Password -- requires 2-Step Verification enabled on that mailbox.
+      - key: GMAIL_SMTP_USER
         sync: false
+      - key: GMAIL_SMTP_APP_PASSWORD
+        sync: false
+      # Optional -- defaults to GMAIL_SMTP_USER if unset. Set this to use a
+      # display name, e.g. "Mod Fragrances Returns <returns@modfragrances.com>".
       - key: RETURNS_EMAIL_FROM
         sync: false

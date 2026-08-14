@@ -1,8 +1,22 @@
-import { Resend } from "resend";
+import nodemailer from "nodemailer";
 import db from "../db.server";
 
-const resendClient = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
-const FROM_ADDRESS = process.env.RETURNS_EMAIL_FROM || "returns@example.com";
+// Sends through Google Workspace's Gmail SMTP using a dedicated mailbox +
+// App Password (works from any host, unlike Workspace's IP-allowlisted SMTP
+// relay service, which wouldn't survive Render's non-static outbound IPs).
+const smtpUser = process.env.GMAIL_SMTP_USER;
+const smtpAppPassword = process.env.GMAIL_SMTP_APP_PASSWORD;
+const FROM_ADDRESS = process.env.RETURNS_EMAIL_FROM || smtpUser || "returns@example.com";
+
+const transporter =
+  smtpUser && smtpAppPassword
+    ? nodemailer.createTransport({
+        host: "smtp.gmail.com",
+        port: 465,
+        secure: true,
+        auth: { user: smtpUser, pass: smtpAppPassword },
+      })
+    : null;
 
 async function sendAndLog({
   returnRequestId,
@@ -17,29 +31,30 @@ async function sendAndLog({
   subject: string;
   html: string;
 }) {
-  if (!resendClient) {
+  if (!transporter) {
     await db.adminNotificationLog.create({
       data: {
         returnRequestId,
         type,
         recipientEmail: to,
+        provider: "gmail-smtp",
         status: "SKIPPED",
-        errorMessage: "RESEND_API_KEY is not configured -- email was not sent.",
+        errorMessage: "GMAIL_SMTP_USER/GMAIL_SMTP_APP_PASSWORD are not configured -- email was not sent.",
       },
     });
     return;
   }
 
   try {
-    const result = await resendClient.emails.send({ from: FROM_ADDRESS, to, subject, html });
+    const result = await transporter.sendMail({ from: FROM_ADDRESS, to, subject, html });
     await db.adminNotificationLog.create({
       data: {
         returnRequestId,
         type,
         recipientEmail: to,
-        status: result.error ? "FAILED" : "SENT",
-        providerMessageId: result.data?.id ?? null,
-        errorMessage: result.error?.message ?? null,
+        provider: "gmail-smtp",
+        status: "SENT",
+        providerMessageId: result.messageId ?? null,
       },
     });
   } catch (error) {
@@ -48,6 +63,7 @@ async function sendAndLog({
         returnRequestId,
         type,
         recipientEmail: to,
+        provider: "gmail-smtp",
         status: "FAILED",
         errorMessage: error instanceof Error ? error.message : String(error),
       },
