@@ -145,6 +145,11 @@ enum ReturnLifecycleStage {
   COMPLETED // Refund issued / no balance due / fully resolved
 }
 
+enum RefundMethod {
+  ORIGINAL_PAYMENT_METHOD
+  STORE_CREDIT
+}
+
 model ReturnRequest {
   id                 String                @id @default(cuid())
   shopDomain         String
@@ -156,6 +161,12 @@ model ReturnRequest {
   orderSnapshot      Json
   shippingMethod     ShippingMethod?
   shippingFeeAmount  Decimal?              @db.Decimal(10, 2)
+  // Only meaningful for the portion of the request that gets an actual
+  // cash-equivalent refund (plain-return items) -- exchanged items' value
+  // is netted natively into the order balance regardless of this choice.
+  // Null for requests submitted before this field existed, or where no
+  // refund ever applies (fully exchanged with no balance owed back).
+  refundMethod       RefundMethod?
   submittedAt        DateTime?
   adminNote          String?
   decidedAt          DateTime?

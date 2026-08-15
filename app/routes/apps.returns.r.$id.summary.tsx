@@ -39,6 +39,10 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     if (!returnRequest.shippingMethod) {
       throw redirect(`/apps/returns/r/${returnRequest.id}/shipping`);
     }
+    const hasRefundableItems = returnRequest.lineItems.some((li) => !li.exchangeSelection);
+    if (hasRefundableItems && !returnRequest.refundMethod) {
+      throw redirect(`/apps/returns/r/${returnRequest.id}/refund-method`);
+    }
   }
 
   const { byLineItemId } = await computeReturnRefundBreakdown(returnRequest);
@@ -173,6 +177,7 @@ function StatusScreen({
     lifecycleStage: string | null;
     adminNote: string | null;
     refundIssuedAmount: unknown;
+    refundMethod: string | null;
     balanceDueAmount: unknown;
     balanceDueCurrency: string | null;
     lineItems: Array<{ currencyCode: string }>;
@@ -290,6 +295,7 @@ function StatusScreen({
         {returnRequest.refundIssuedAmount != null && (
           <p style={{ fontSize: 14, marginTop: 8 }}>
             Refund issued: {Number(returnRequest.refundIssuedAmount).toFixed(2)} {currency}
+            {returnRequest.refundMethod === "STORE_CREDIT" ? " (as store credit)" : " (to your original payment method)"}
           </p>
         )}
       </div>
@@ -375,6 +381,11 @@ export default function SummaryStep() {
         <p style={{ color: "#6b6b6b", fontSize: 13 }}>
           ✓ {returnRequest.photos.length} photo{returnRequest.photos.length === 1 ? "" : "s"} received
         </p>
+        {returnRequest.refundMethod && (
+          <p style={{ color: "#6b6b6b", fontSize: 13 }}>
+            Refund method: {returnRequest.refundMethod === "STORE_CREDIT" ? "Store credit" : "Original payment method"}
+          </p>
+        )}
 
         <p style={{ fontSize: 16, fontWeight: 700, marginTop: 12 }}>
           {netCents <= 0

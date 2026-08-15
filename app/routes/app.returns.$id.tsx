@@ -26,6 +26,8 @@ import {
   getOrderOutstandingBalance,
   getExchangeFulfillmentStatus,
   sendOrderInvoice,
+  getOrderCustomerId,
+  creditStoreCredit,
 } from "../lib/shopify-returns.server";
 import { getReturnPhotoUrls } from "../lib/photo-upload.server";
 import { sendReturnApprovedEmail, sendReturnDeniedEmail, sendReturnReceivedEmail } from "../lib/email.server";
@@ -184,27 +186,51 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     const netRefundCents = plainReturnItems.length > 0 ? Math.max(0, refundOnlyCents - feeCents) : 0;
 
     let refundId: string | null = null;
+    let refundMethodNote: string | null = null;
     if (netRefundCents > 0) {
-      const refundResult = await createShopifyRefund(admin, {
-        orderId: returnRequest.orderId,
-        lineItems: refundLineItems,
-        totalAmount: (netRefundCents / 100).toFixed(2),
-        idempotencyKey: `${returnRequest.id}-refund`,
-      });
-      if (!refundResult.ok) {
-        await db.returnRequest.update({
-          where: { id: returnRequest.id },
-          data: {
-            receivedAt: new Date(),
-            adminNote: `Return marked received, but the refund failed: ${refundResult.error}. Process it manually from the order.`,
-          },
-        });
-        return {
-          ok: false,
-          error: `Return marked received, but the refund failed: ${refundResult.error}. You'll need to process it manually from the order.`,
-        };
+      let storeCreditIssued = false;
+
+      if (returnRequest.refundMethod === "STORE_CREDIT") {
+        const customerId = await getOrderCustomerId(admin, { orderId: returnRequest.orderId });
+        if (!customerId) {
+          refundMethodNote =
+            "Customer chose store credit, but the order has no linked Shopify customer account to credit -- refunded to the original payment method instead.";
+        } else {
+          const creditResult = await creditStoreCredit(admin, {
+            customerId,
+            amount: (netRefundCents / 100).toFixed(2),
+            currencyCode,
+          });
+          if (creditResult.ok) {
+            storeCreditIssued = true;
+          } else {
+            refundMethodNote = `Store credit issuance failed (${creditResult.error}) -- refunded to the original payment method instead.`;
+          }
+        }
       }
-      refundId = refundResult.refundId;
+
+      if (!storeCreditIssued) {
+        const refundResult = await createShopifyRefund(admin, {
+          orderId: returnRequest.orderId,
+          lineItems: refundLineItems,
+          totalAmount: (netRefundCents / 100).toFixed(2),
+          idempotencyKey: `${returnRequest.id}-refund`,
+        });
+        if (!refundResult.ok) {
+          await db.returnRequest.update({
+            where: { id: returnRequest.id },
+            data: {
+              receivedAt: new Date(),
+              adminNote: `Return marked received, but the refund failed: ${refundResult.error}. Process it manually from the order.`,
+            },
+          });
+          return {
+            ok: false,
+            error: `Return marked received, but the refund failed: ${refundResult.error}. You'll need to process it manually from the order.`,
+          };
+        }
+        refundId = refundResult.refundId;
+      }
     }
 
     const balance = await getOrderOutstandingBalance(admin, { orderId: returnRequest.orderId });
@@ -219,7 +245,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         refundIssuedAmount: netRefundCents > 0 ? netRefundCents / 100 : null,
         balanceDueAmount: balanceDue ? balanceDue.amount : null,
         balanceDueCurrency: balanceDue ? balanceDue.currencyCode : null,
-        adminNote: null,
+        adminNote: refundMethodNote,
       },
     });
 
@@ -516,6 +542,11 @@ export default function ReturnDetail() {
                   {" — "}
                   {returnRequest.shippingFeeAmount?.toString() ?? "0.00"} fee
                 </Text>
+                {returnRequest.refundMethod && (
+                  <Text as="p" tone="subdued">
+                    Refund method: {returnRequest.refundMethod === "STORE_CREDIT" ? "Store credit" : "Original payment method"}
+                  </Text>
+                )}
                 {returnRequest.refundIssuedAmount != null && (
                   <Text as="p" tone="subdued">
                     Refund issued: {returnRequest.refundIssuedAmount.toString()}

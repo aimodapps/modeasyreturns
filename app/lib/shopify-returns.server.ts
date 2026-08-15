@@ -447,3 +447,60 @@ export async function sendOrderInvoice(
   }
   return { ok: true };
 }
+
+const ORDER_CUSTOMER_QUERY = `#graphql
+  query OrderCustomer($orderId: ID!) {
+    order(id: $orderId) {
+      customer {
+        id
+      }
+    }
+  }
+`;
+
+/** Store credit is issued against a Customer account, not an order -- guest checkouts with no account have none, and the caller needs to fall back to a cash refund in that case. */
+export async function getOrderCustomerId(
+  admin: AdminApiContext,
+  { orderId }: { orderId: string },
+): Promise<string | null> {
+  const response = await admin.graphql(ORDER_CUSTOMER_QUERY, { variables: { orderId } });
+  const json: any = await response.json();
+  return json?.data?.order?.customer?.id ?? null;
+}
+
+const STORE_CREDIT_ACCOUNT_CREDIT_MUTATION = `#graphql
+  mutation CreditStoreCredit($id: ID!, $creditInput: StoreCreditAccountCreditInput!) {
+    storeCreditAccountCredit(id: $id, creditInput: $creditInput) {
+      storeCreditAccountTransaction {
+        id
+      }
+      userErrors {
+        field
+        message
+      }
+    }
+  }
+`;
+
+/** Requires the write_store_credit_account_transactions scope. Creates the customer's store credit account automatically if they don't already have one in this currency. */
+export async function creditStoreCredit(
+  admin: AdminApiContext,
+  { customerId, amount, currencyCode }: { customerId: string; amount: string; currencyCode: string },
+): Promise<{ ok: true; transactionId: string } | { ok: false; error: string }> {
+  const response = await admin.graphql(STORE_CREDIT_ACCOUNT_CREDIT_MUTATION, {
+    variables: {
+      id: customerId,
+      creditInput: { creditAmount: { amount, currencyCode } },
+    },
+  });
+  const json: any = await response.json();
+  const errors = json?.data?.storeCreditAccountCredit?.userErrors;
+  if (errors?.length) {
+    return { ok: false, error: errors.map((e: any) => e.message).join(", ") };
+  }
+  const transaction = json?.data?.storeCreditAccountCredit?.storeCreditAccountTransaction;
+  if (!transaction) {
+    return { ok: false, error: "Shopify did not confirm the store credit was issued." };
+  }
+  return { ok: true, transactionId: transaction.id };
+}
