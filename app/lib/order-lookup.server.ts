@@ -6,7 +6,11 @@ import {
   type ReturnableItem,
   type OrderLineItemForDiscount,
 } from "./shopify-admin.server";
-import { getExcludedProductIds, splitByExclusionRules } from "./return-exclusions.server";
+import {
+  getExcludedProductIds,
+  getExcludedLineItemTags,
+  splitByExclusionRules,
+} from "./return-exclusions.server";
 
 export const GENERIC_NOT_FOUND_MESSAGE =
   "We couldn't find a matching order. Please double-check your order number and email or phone number, then try again.";
@@ -59,7 +63,12 @@ export async function performOrderLookup(
   // customer who expects to find an item there sees why, instead of a
   // silent gap that reads like a bug.
   const excludedProductIds = await getExcludedProductIds(admin, exclusionRules);
-  const { eligible, excluded } = splitByExclusionRules(order.returnableItems, excludedProductIds);
+  const excludedLineItemTags = getExcludedLineItemTags(exclusionRules);
+  const { eligible, excluded } = splitByExclusionRules(
+    order.returnableItems,
+    excludedProductIds,
+    excludedLineItemTags,
+  );
 
   if (shopSettings?.maxReturnsPerOrder != null) {
     // Counts submitted requests, not items -- a customer can still return

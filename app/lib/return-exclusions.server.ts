@@ -68,7 +68,7 @@ export async function getCatalogCollectionsByIds(
 }
 
 export type ReturnExclusionRule = {
-  type: "PRODUCT" | "COLLECTION";
+  type: "PRODUCT" | "COLLECTION" | "LINE_ITEM_TAG";
   shopifyResourceId: string;
 };
 
@@ -127,23 +127,37 @@ export async function getExcludedProductIds(
   return excludedProductIds;
 }
 
+/** LINE_ITEM_TAG rules need no API call -- the configured text is matched directly against each line item's own custom attributes at split time. */
+export function getExcludedLineItemTags(exclusions: ReturnExclusionRule[]): string[] {
+  return exclusions.filter((e) => e.type === "LINE_ITEM_TAG").map((e) => e.shopifyResourceId.toLowerCase());
+}
+
 /**
  * Splits Shopify's returnable items into what's actually selectable vs. what
- * this shop has separately marked non-returnable (final sale) via product or
- * collection ID -- see the comment on getReturnableItems for why this can't
- * just be deferred to Shopify's own return rules.
+ * this shop has separately marked non-returnable (final sale) -- either by
+ * product/collection ID, or by a line item's own custom attributes (what
+ * bundle-builder apps use to mark a specific purchase as part of a bundle,
+ * distinct from the product itself, which may still be returnable when
+ * bought standalone). See the comment on getReturnableItems for why this
+ * can't just be deferred to Shopify's own return rules.
  */
 export function splitByExclusionRules(
   items: ReturnableItem[],
   excludedProductIds: Set<string>,
+  excludedLineItemTags: string[] = [],
 ): { eligible: ReturnableItem[]; excluded: ReturnableItem[] } {
-  if (excludedProductIds.size === 0) return { eligible: items, excluded: [] };
+  if (excludedProductIds.size === 0 && excludedLineItemTags.length === 0) {
+    return { eligible: items, excluded: [] };
+  }
 
   const eligible: ReturnableItem[] = [];
   const excluded: ReturnableItem[] = [];
   for (const item of items) {
-    const isExcluded = Boolean(item.productId && excludedProductIds.has(item.productId));
-    (isExcluded ? excluded : eligible).push(item);
+    const isExcludedByProduct = Boolean(item.productId && excludedProductIds.has(item.productId));
+    const isExcludedByTag = excludedLineItemTags.some((tag) =>
+      item.tagCandidates.some((candidate) => candidate.toLowerCase().includes(tag)),
+    );
+    (isExcludedByProduct || isExcludedByTag ? excluded : eligible).push(item);
   }
   return { eligible, excluded };
 }

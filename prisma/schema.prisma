@@ -61,6 +61,11 @@ model ShopSettings {
 enum ExclusionType {
   PRODUCT
   COLLECTION
+  // Matched against a returned line item's own custom attributes (what
+  // bundle-builder apps use to mark "this specific purchase was part of a
+  // bundle") rather than the product it's for -- the same product bought
+  // standalone stays returnable; only the bundled line item is excluded.
+  LINE_ITEM_TAG
 }
 
 // App-level non-returnable list. Shopify's native "final sale" return
@@ -70,12 +75,16 @@ enum ExclusionType {
 // Shopify's own developer community. So this app has to track and enforce
 // its own exclusion list rather than deferring to Shopify's config.
 model ReturnExclusion {
-  id                String        @id @default(cuid())
-  shopDomain        String
-  type              ExclusionType
+  id         String        @id @default(cuid())
+  shopDomain String
+  type       ExclusionType
+  // For PRODUCT/COLLECTION, the Shopify GID. For LINE_ITEM_TAG, the tag
+  // text itself (matched as a case-insensitive substring against each line
+  // item's "key: value" custom attributes) -- reused as the identifier so
+  // the shopDomain+value uniqueness constraint still applies uniformly.
   shopifyResourceId String
   title             String
-  createdAt         DateTime      @default(now())
+  createdAt         DateTime @default(now())
 
   @@unique([shopDomain, shopifyResourceId])
   @@index([shopDomain])

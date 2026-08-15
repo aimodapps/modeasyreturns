@@ -44,9 +44,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const intent = String(formData.get("intent"));
 
   if (intent === "addExclusion") {
-    const type = String(formData.get("type")) === "COLLECTION" ? "COLLECTION" : "PRODUCT";
-    const shopifyResourceId = String(formData.get("shopifyResourceId"));
-    const title = String(formData.get("title"));
+    const typeRaw = String(formData.get("type"));
+    const type = typeRaw === "COLLECTION" || typeRaw === "LINE_ITEM_TAG" ? typeRaw : "PRODUCT";
+    const shopifyResourceId = String(formData.get("shopifyResourceId")).trim();
+    const title = String(formData.get("title")).trim();
+    if (!shopifyResourceId) {
+      return { ok: false as const, error: "Enter a tag to exclude." };
+    }
     await db.returnExclusion.upsert({
       where: { shopDomain_shopifyResourceId: { shopDomain: session.shop, shopifyResourceId } },
       update: { title, type },
@@ -87,6 +91,7 @@ export default function EligibilitySettings() {
   const [maxReturnsPerOrder, setMaxReturnsPerOrder] = useState(settings?.maxReturnsPerOrder?.toString() ?? "");
   const [productSearch, setProductSearch] = useState(productQuery);
   const [collectionSearch, setCollectionSearch] = useState(collectionQuery);
+  const [tagInput, setTagInput] = useState("");
 
   useEffect(() => {
     if (fetcher.state === "idle" && fetcher.data?.ok) {
@@ -100,12 +105,25 @@ export default function EligibilitySettings() {
 
   const excludedResourceIds = new Set(exclusions.map((e) => e.shopifyResourceId));
 
-  const addExclusion = (type: "PRODUCT" | "COLLECTION", shopifyResourceId: string, title: string) => {
+  const addExclusion = (type: "PRODUCT" | "COLLECTION" | "LINE_ITEM_TAG", shopifyResourceId: string, title: string) => {
     listFetcher.submit({ intent: "addExclusion", type, shopifyResourceId, title }, { method: "post" });
   };
 
   const removeExclusion = (id: string) => {
     listFetcher.submit({ intent: "removeExclusion", id }, { method: "post" });
+  };
+
+  const addTag = () => {
+    const tag = tagInput.trim();
+    if (!tag) return;
+    addExclusion("LINE_ITEM_TAG", tag, tag);
+    setTagInput("");
+  };
+
+  const TYPE_LABELS: Record<string, string> = {
+    PRODUCT: "Product",
+    COLLECTION: "Collection",
+    LINE_ITEM_TAG: "Line item tag",
   };
 
   return (
@@ -123,18 +141,20 @@ export default function EligibilitySettings() {
                 the API this app uses, so they can't be relied on here -- anything you mark final sale
                 there will still show as returnable in this wizard unless it's also added below. Items
                 added here show in the wizard as disabled with a "Non-returnable" label, rather than
-                being hidden, so a customer who expects to find something there sees why.
+                being hidden, so a customer who expects to find something there sees why. Line item tags
+                (below) exclude a specific purchase without excluding the product itself -- useful for
+                apps like bundle builders where the same product stays returnable when bought standalone.
               </Text>
 
               {exclusions.length === 0 && (
                 <Text as="p" tone="subdued">
-                  No products or collections excluded yet.
+                  Nothing excluded yet.
                 </Text>
               )}
               {exclusions.map((e) => (
                 <InlineStack key={e.id} align="space-between" blockAlign="center">
                   <InlineStack gap="300" blockAlign="center">
-                    <Badge>{e.type === "PRODUCT" ? "Product" : "Collection"}</Badge>
+                    <Badge>{TYPE_LABELS[e.type] ?? e.type}</Badge>
                     <Text as="span">{e.title}</Text>
                   </InlineStack>
                   <Button variant="plain" tone="critical" onClick={() => removeExclusion(e.id)}>
@@ -221,6 +241,31 @@ export default function EligibilitySettings() {
                     )}
                   </InlineStack>
                 ))}
+              </BlockStack>
+            </Card>
+          </Box>
+
+          <Box paddingBlockStart="400">
+            <Card>
+              <BlockStack gap="400">
+                <Text as="h2" variant="headingMd">
+                  Add a line item tag
+                </Text>
+                <Text as="p" tone="subdued">
+                  Matched as a case-insensitive substring against each returned line item's own
+                  properties, e.g. from Mod Bundle Builder. Enter the full text (e.g. "Bundle: Part of
+                  Bundle Pack") to match one specific bundle, or just the key (e.g. "Bundle") to match
+                  any bundle.
+                </Text>
+                <TextField
+                  label="Line item tag text"
+                  labelHidden
+                  value={tagInput}
+                  onChange={setTagInput}
+                  autoComplete="off"
+                  placeholder='e.g. "Bundle" or "Bundle: Part of Bundle Pack"'
+                  connectedRight={<Button onClick={addTag}>Add</Button>}
+                />
               </BlockStack>
             </Card>
           </Box>

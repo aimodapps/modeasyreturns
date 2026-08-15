@@ -10,6 +10,10 @@ export type ReturnableItem = {
   currencyCode: string;
   imageUrl: string | null;
   productId: string | null;
+  // "key: value" strings from the line item's own custom attributes (what
+  // bundle-builder apps use to mark a specific purchase as part of a
+  // bundle) -- matched against admin-configured LINE_ITEM_TAG exclusions.
+  tagCandidates: string[];
 };
 
 export type DiscountApplicationSummary = {
@@ -119,6 +123,10 @@ const RETURNABLE_FULFILLMENTS_QUERY = `#graphql
                 }
                 product {
                   id
+                }
+                customAttributes {
+                  key
+                  value
                 }
               }
             }
@@ -265,6 +273,11 @@ async function getReturnableItems(
         currencyCode: lineItem.discountedUnitPriceSet?.shopMoney?.currencyCode ?? "USD",
         imageUrl: lineItem.image?.url ?? null,
         productId: lineItem.product?.id ?? null,
+        tagCandidates: (lineItem.customAttributes ?? []).flatMap((attr: any) => [
+          attr.key,
+          attr.value,
+          `${attr.key}: ${attr.value}`,
+        ]),
       });
     }
   }
