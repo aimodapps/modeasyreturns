@@ -73,6 +73,42 @@ export default function ShippingStep() {
   const isSubmitting = navigation.state === "submitting";
   const currency = returnRequest.lineItems[0]?.currencyCode ?? "";
 
+  // With the restocking fee turned off entirely, "ship it yourself" isn't
+  // being offered as a distinct path anymore -- every return goes out via
+  // return label, so this becomes a single fee-confirmation screen instead
+  // of a choice between two options.
+  if (!quote.restockingFeeAvailable) {
+    return (
+      <div style={styles.page}>
+        <style>{PORTAL_ANIMATION_CSS}</style>
+        <div style={styles.card} className="portal-card">
+          <PortalLogo logoUrl={branding.logoUrl} logoWidthPx={branding.logoWidthPx} />
+          <p style={styles.breadcrumb}>Order {returnRequest.orderName}</p>
+          <h1 style={styles.heading}>Return shipping fee</h1>
+          <p style={styles.subheading}>
+            A prepaid return label will be provided for shipping this back to us.
+          </p>
+
+          <div style={styles.optionCard}>
+            <span style={styles.optionLabel}>Return label</span>
+            <span style={styles.optionMessage}>
+              {quote.labelFeeAvailable
+                ? `${quote.labelFeePerItem} ${currency} per item — ${quote.labelFeeAmount} ${currency} total for this return.`
+                : "No fee applies."}
+            </span>
+          </div>
+
+          <Form method="post" action={`/apps/returns/r/${returnRequest.id}/shipping`} style={styles.form}>
+            <input type="hidden" name="shippingMethod" value="RETURN_LABEL" />
+            <button style={styles.button} type="submit" disabled={isSubmitting}>
+              {isSubmitting ? "Saving…" : "Confirm & continue"}
+            </button>
+          </Form>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div style={styles.page}>
       <style>{PORTAL_ANIMATION_CSS}</style>
@@ -95,11 +131,9 @@ export default function ShippingStep() {
               I'll use my own carrier
             </span>
             <span style={styles.optionMessage}>
-              {quote.restockingFeeAvailable
-                ? `A restocking fee of ${quote.restockingFeeAmount} ${currency} applies${
-                    quote.restockingFeeType === "PERCENTAGE" ? ` (${quote.restockingFeeValue}%)` : ""
-                  }.`
-                : "No restocking fee applies."}
+              {`A restocking fee of ${quote.restockingFeeAmount} ${currency} applies${
+                quote.restockingFeeType === "PERCENTAGE" ? ` (${quote.restockingFeeValue}%)` : ""
+              }.`}
             </span>
           </label>
 
