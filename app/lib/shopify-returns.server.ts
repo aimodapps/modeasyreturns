@@ -177,71 +177,81 @@ export async function processShopifyReturn(
   admin: AdminApiContext,
   { returnId }: { returnId: string },
 ): Promise<{ ok: true; orderId: string } | { ok: false; error: string }> {
-  const detailsResponse = await admin.graphql(RETURN_FOR_PROCESSING_QUERY, { variables: { returnId } });
-  const detailsJson: any = await detailsResponse.json();
-  const ret = detailsJson?.data?.return;
-  if (!ret) {
-    return { ok: false, error: "Couldn't load the Shopify return to process it." };
-  }
+  try {
+    const detailsResponse = await admin.graphql(RETURN_FOR_PROCESSING_QUERY, { variables: { returnId } });
+    const detailsJson: any = await detailsResponse.json();
+    const ret = detailsJson?.data?.return;
+    if (!ret) {
+      return { ok: false, error: "Couldn't load the Shopify return to process it." };
+    }
 
-  const orderId = ret.order.id;
-  const locationId = ret.order.fulfillmentOrders?.nodes?.[0]?.assignedLocation?.location?.id;
-  if (!locationId) {
-    return { ok: false, error: "Couldn't determine a fulfillment location to restock the returned item(s) at." };
-  }
+    const orderId = ret.order.id;
+    const locationId = ret.order.fulfillmentOrders?.nodes?.[0]?.assignedLocation?.location?.id;
+    if (!locationId) {
+      return { ok: false, error: "Couldn't determine a fulfillment location to restock the returned item(s) at." };
+    }
 
-  const reverseLineItemIdByFulfillmentLineItemId = new Map<string, string>();
-  for (const rfo of ret.reverseFulfillmentOrders?.nodes ?? []) {
-    for (const li of rfo.lineItems?.nodes ?? []) {
-      if (li.fulfillmentLineItem?.id) {
-        reverseLineItemIdByFulfillmentLineItemId.set(li.fulfillmentLineItem.id, li.id);
+    const reverseLineItemIdByFulfillmentLineItemId = new Map<string, string>();
+    for (const rfo of ret.reverseFulfillmentOrders?.nodes ?? []) {
+      for (const li of rfo.lineItems?.nodes ?? []) {
+        if (li.fulfillmentLineItem?.id) {
+          reverseLineItemIdByFulfillmentLineItemId.set(li.fulfillmentLineItem.id, li.id);
+        }
       }
     }
-  }
 
-  const returnLineItems = (ret.returnLineItems?.nodes ?? []).map((rli: any) => {
-    const reverseLineItemId = reverseLineItemIdByFulfillmentLineItemId.get(rli.fulfillmentLineItem?.id);
-    return {
-      id: rli.id,
-      quantity: rli.quantity,
-      dispositions: reverseLineItemId
-        ? [
-            {
-              reverseFulfillmentOrderLineItemId: reverseLineItemId,
-              quantity: rli.quantity,
-              locationId,
-              dispositionType: "RESTOCKED",
-            },
-          ]
-        : [],
-    };
-  });
+    const returnLineItems = (ret.returnLineItems?.nodes ?? []).map((rli: any) => {
+      const reverseLineItemId = reverseLineItemIdByFulfillmentLineItemId.get(rli.fulfillmentLineItem?.id);
+      return {
+        id: rli.id,
+        quantity: rli.quantity,
+        dispositions: reverseLineItemId
+          ? [
+              {
+                reverseFulfillmentOrderLineItemId: reverseLineItemId,
+                quantity: rli.quantity,
+                locationId,
+                dispositionType: "RESTOCKED",
+              },
+            ]
+          : [],
+      };
+    });
 
-  const exchangeLineItems = (ret.exchangeLineItems?.nodes ?? []).map((eli: any) => ({
-    id: eli.id,
-    quantity: eli.quantity,
-  }));
+    const exchangeLineItems = (ret.exchangeLineItems?.nodes ?? []).map((eli: any) => ({
+      id: eli.id,
+      quantity: eli.quantity,
+    }));
 
-  const response = await admin.graphql(RETURN_PROCESS_MUTATION, {
-    variables: {
-      input: {
-        returnId,
-        returnLineItems,
-        exchangeLineItems,
-        notifyCustomer: false,
+    const response = await admin.graphql(RETURN_PROCESS_MUTATION, {
+      variables: {
+        input: {
+          returnId,
+          returnLineItems,
+          exchangeLineItems,
+          notifyCustomer: false,
+        },
       },
-    },
-  });
-  const json: any = await response.json();
-  const errors = json?.data?.returnProcess?.userErrors;
-  if (errors?.length) {
-    return { ok: false, error: errors.map((e: any) => e.message).join(", ") };
-  }
-  if (!json?.data?.returnProcess?.return) {
-    return { ok: false, error: "Shopify did not confirm the return was processed." };
-  }
+    });
+    const json: any = await response.json();
+    const errors = json?.data?.returnProcess?.userErrors;
+    if (errors?.length) {
+      return { ok: false, error: errors.map((e: any) => e.message).join(", ") };
+    }
+    if (!json?.data?.returnProcess?.return) {
+      return { ok: false, error: "Shopify did not confirm the return was processed." };
+    }
 
-  return { ok: true, orderId };
+    return { ok: true, orderId };
+  } catch (error) {
+    // admin.graphql() throws (rather than returning a normal response) for
+    // protocol-level errors like a missing access scope -- caught here so a
+    // Shopify-side hiccup surfaces as a clean admin-facing message instead
+    // of crashing the whole action into a raw 500.
+    console.error("[shopify-returns] processShopifyReturn failed", error);
+    const message = error instanceof Error ? error.message : String(error);
+    return { ok: false, error: `Shopify request failed: ${message}` };
+  }
 }
 
 const ORDER_BALANCE_QUERY = `#graphql
