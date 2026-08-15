@@ -72,6 +72,61 @@ export type ReturnExclusionRule = {
   shopifyResourceId: string;
 };
 
+const COLLECTION_PRODUCT_IDS_QUERY = `#graphql
+  query CollectionProductIds($id: ID!, $cursor: String) {
+    collection(id: $id) {
+      products(first: 250, after: $cursor) {
+        nodes {
+          id
+        }
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+      }
+    }
+  }
+`;
+
+/**
+ * Resolves the shop's exclusion rules down to a flat set of excluded
+ * product IDs -- collection-based rules are expanded by fetching that
+ * collection's own member products, rather than checking each returnable
+ * item's OWN collection membership (Product.collections). The latter would
+ * need to be capped at some page size per product and can silently miss a
+ * match for any product that belongs to more collections than that cap --
+ * a real risk for products already organized into several collections.
+ * This direction is bounded by the shop's (typically small, deliberately
+ * configured) exclusion list instead of a product's unbounded collection
+ * membership, and can't silently drop a match that way.
+ */
+export async function getExcludedProductIds(
+  admin: AdminApiContext,
+  exclusions: ReturnExclusionRule[],
+): Promise<Set<string>> {
+  const excludedProductIds = new Set(
+    exclusions.filter((e) => e.type === "PRODUCT").map((e) => e.shopifyResourceId),
+  );
+
+  const collectionIds = exclusions.filter((e) => e.type === "COLLECTION").map((e) => e.shopifyResourceId);
+  for (const collectionId of collectionIds) {
+    let cursor: string | null = null;
+    do {
+      const response: Response = await admin.graphql(COLLECTION_PRODUCT_IDS_QUERY, {
+        variables: { id: collectionId, cursor },
+      });
+      const json: any = await response.json();
+      const products = json?.data?.collection?.products;
+      for (const node of products?.nodes ?? []) {
+        if (node?.id) excludedProductIds.add(node.id);
+      }
+      cursor = products?.pageInfo?.hasNextPage ? products.pageInfo.endCursor : null;
+    } while (cursor);
+  }
+
+  return excludedProductIds;
+}
+
 /**
  * Splits Shopify's returnable items into what's actually selectable vs. what
  * this shop has separately marked non-returnable (final sale) via product or
@@ -80,23 +135,14 @@ export type ReturnExclusionRule = {
  */
 export function splitByExclusionRules(
   items: ReturnableItem[],
-  exclusions: ReturnExclusionRule[],
+  excludedProductIds: Set<string>,
 ): { eligible: ReturnableItem[]; excluded: ReturnableItem[] } {
-  if (exclusions.length === 0) return { eligible: items, excluded: [] };
-
-  const excludedProductIds = new Set(
-    exclusions.filter((e) => e.type === "PRODUCT").map((e) => e.shopifyResourceId),
-  );
-  const excludedCollectionIds = new Set(
-    exclusions.filter((e) => e.type === "COLLECTION").map((e) => e.shopifyResourceId),
-  );
+  if (excludedProductIds.size === 0) return { eligible: items, excluded: [] };
 
   const eligible: ReturnableItem[] = [];
   const excluded: ReturnableItem[] = [];
   for (const item of items) {
-    const isExcluded =
-      (item.productId && excludedProductIds.has(item.productId)) ||
-      item.collectionIds.some((id) => excludedCollectionIds.has(id));
+    const isExcluded = Boolean(item.productId && excludedProductIds.has(item.productId));
     (isExcluded ? excluded : eligible).push(item);
   }
   return { eligible, excluded };

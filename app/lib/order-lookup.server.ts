@@ -6,7 +6,7 @@ import {
   type ReturnableItem,
   type OrderLineItemForDiscount,
 } from "./shopify-admin.server";
-import { splitByExclusionRules } from "./return-exclusions.server";
+import { getExcludedProductIds, splitByExclusionRules } from "./return-exclusions.server";
 
 export const GENERIC_NOT_FOUND_MESSAGE =
   "We couldn't find a matching order. Please double-check your order number and email or phone number, then try again.";
@@ -58,7 +58,8 @@ export async function performOrderLookup(
   // Shown frozen/"Non-returnable" in the wizard rather than hidden, so a
   // customer who expects to find an item there sees why, instead of a
   // silent gap that reads like a bug.
-  const { eligible, excluded } = splitByExclusionRules(order.returnableItems, exclusionRules);
+  const excludedProductIds = await getExcludedProductIds(admin, exclusionRules);
+  const { eligible, excluded } = splitByExclusionRules(order.returnableItems, excludedProductIds);
 
   if (shopSettings?.maxReturnsPerOrder != null) {
     // Counts submitted requests, not items -- a customer can still return
