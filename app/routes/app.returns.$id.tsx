@@ -30,7 +30,11 @@ import {
   creditStoreCredit,
 } from "../lib/shopify-returns.server";
 import { getReturnPhotoUrls } from "../lib/photo-upload.server";
-import { sendReturnApprovedEmail, sendReturnDeniedEmail, sendReturnReceivedEmail } from "../lib/email.server";
+import {
+  sendReturnApprovedEmail,
+  sendReturnDeniedEmail,
+  sendReturnReceivedEmail,
+} from "../lib/email.server";
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
@@ -38,7 +42,13 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const returnRequest = await db.returnRequest.findFirst({
     where: { id: params.id!, shopDomain: session.shop },
     include: {
-      lineItems: { include: { conditionOption: true, reason: true, exchangeSelection: true } },
+      lineItems: {
+        include: {
+          conditionOption: true,
+          reason: true,
+          exchangeSelection: true,
+        },
+      },
       photos: true,
       notifications: { orderBy: { sentAt: "desc" } },
     },
@@ -61,20 +71,35 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
         targetVariantIds,
       });
     } catch (error) {
-      console.error("[app.returns.$id] failed to fetch live exchange fulfillment status", error);
+      console.error(
+        "[app.returns.$id] failed to fetch live exchange fulfillment status",
+        error,
+      );
     }
   }
 
   let photoUrls: Record<string, string | null> = {};
   if (returnRequest.photos.length > 0) {
     try {
-      photoUrls = await getReturnPhotoUrls(admin, returnRequest.photos.map((p) => p.shopifyFileId));
+      photoUrls = await getReturnPhotoUrls(
+        admin,
+        returnRequest.photos.map((p) => p.shopifyFileId),
+      );
     } catch (error) {
-      console.error("[app.returns.$id] failed to fetch photo preview URLs", error);
+      console.error(
+        "[app.returns.$id] failed to fetch photo preview URLs",
+        error,
+      );
     }
   }
 
-  return { returnRequest, refundBreakdown, hasExchange, exchangeFulfillmentStatus, photoUrls };
+  return {
+    returnRequest,
+    refundBreakdown,
+    hasExchange,
+    exchangeFulfillmentStatus,
+    photoUrls,
+  };
 };
 
 export const action = async ({ request, params }: ActionFunctionArgs) => {
@@ -82,217 +107,280 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 
   const returnRequest = await db.returnRequest.findFirst({
     where: { id: params.id!, shopDomain: session.shop },
-    include: { lineItems: { include: { exchangeSelection: true, reason: true } } },
+    include: {
+      lineItems: { include: { exchangeSelection: true, reason: true } },
+    },
   });
   if (!returnRequest) throw new Response("Not found", { status: 404 });
 
   const formData = await request.formData();
   const intent = String(formData.get("intent"));
 
-  if (intent === "deny") {
-    const note = String(formData.get("note") ?? "").trim() || null;
-    await db.returnRequest.update({
-      where: { id: returnRequest.id },
-      data: { status: "DENIED", decidedAt: new Date(), adminNote: note },
-    });
-    if (returnRequest.customerEmail) {
-      await sendReturnDeniedEmail({
-        returnRequestId: returnRequest.id,
-        customerEmail: returnRequest.customerEmail,
-        orderName: returnRequest.orderName,
-        note,
-      }).catch((error) => console.error("[app.returns] failed to send denial email", error));
-    }
-    return { ok: true };
-  }
-
-  if (intent === "approve") {
-    const currencyCode = returnRequest.lineItems[0]?.currencyCode ?? "USD";
-
-    const exchangeLineItems = returnRequest.lineItems
-      .filter((li) => li.exchangeSelection)
-      .map((li) => ({ variantId: li.exchangeSelection!.targetVariantId, quantity: li.quantity }));
-
-    const feeAmount = returnRequest.shippingFeeAmount != null ? Number(returnRequest.shippingFeeAmount) : 0;
-
-    const returnResult = await createShopifyReturn(admin, {
-      orderId: returnRequest.orderId,
-      lineItems: returnRequest.lineItems.map((li) => ({
-        fulfillmentLineItemId: li.fulfillmentLineItemId,
-        quantity: li.quantity,
-        reasonCode: undefined,
-        reasonLabel: li.reason?.label,
-      })),
-      exchangeLineItems,
-      returnShippingFee: feeAmount > 0 ? { amount: feeAmount.toFixed(2), currencyCode } : null,
-    });
-
-    if (!returnResult.ok) {
-      return { ok: false, error: `Couldn't create the Shopify return: ${returnResult.error}` };
-    }
-
-    await db.returnRequest.update({
-      where: { id: returnRequest.id },
-      data: {
-        status: "APPROVED",
-        decidedAt: new Date(),
-        shopifyReturnId: returnResult.returnId,
-        shopifyReturnName: returnResult.returnName,
-        lifecycleStage: "AWAITING_RECEIPT",
-        adminNote: null,
-      },
-    });
-
-    if (returnRequest.customerEmail) {
-      await sendReturnApprovedEmail({
-        returnRequestId: returnRequest.id,
-        customerEmail: returnRequest.customerEmail,
-        orderName: returnRequest.orderName,
-      }).catch((error) => console.error("[app.returns] failed to send approval email", error));
-    }
-
-    return { ok: true };
-  }
-
-  if (intent === "markReceived") {
-    if (!returnRequest.shopifyReturnId) {
-      return { ok: false, error: "This request has no Shopify return to process yet." };
-    }
-
-    const processResult = await processShopifyReturn(admin, { returnId: returnRequest.shopifyReturnId });
-    if (!processResult.ok) {
-      return { ok: false, error: `Couldn't mark the return as received: ${processResult.error}` };
-    }
-
-    const { byLineItemId } = await computeReturnRefundBreakdown(returnRequest);
-    const currencyCode = returnRequest.lineItems[0]?.currencyCode ?? "USD";
-
-    // Only plain-return items get a manual refund here -- exchanged items'
-    // value is netted natively by Shopify into the order's own balance
-    // (read back below via getOrderOutstandingBalance), not computed by us.
-    const plainReturnItems = returnRequest.lineItems.filter((li) => !li.exchangeSelection);
-    let refundOnlyCents = 0;
-    const refundLineItems: Array<{ shopifyLineItemId: string; quantity: number }> = [];
-    for (const li of plainReturnItems) {
-      const recalculated = byLineItemId.get(li.id)?.recalculatedRefund ?? Number(li.unitPrice) * li.quantity;
-      refundOnlyCents += Math.round(recalculated * 100);
-      refundLineItems.push({ shopifyLineItemId: li.shopifyLineItemId, quantity: li.quantity });
-    }
-
-    const feeCents = returnRequest.shippingFeeAmount != null ? Math.round(Number(returnRequest.shippingFeeAmount) * 100) : 0;
-    // The fee only comes out of a refund we're actually issuing -- an
-    // exchange-only fee is expected to already be netted by Shopify via the
-    // returnShippingFee we set at approval time.
-    const netRefundCents = plainReturnItems.length > 0 ? Math.max(0, refundOnlyCents - feeCents) : 0;
-
-    let refundId: string | null = null;
-    let refundMethodNote: string | null = null;
-    if (netRefundCents > 0) {
-      let storeCreditIssued = false;
-
-      if (returnRequest.refundMethod === "STORE_CREDIT") {
-        const customerId = await getOrderCustomerId(admin, { orderId: returnRequest.orderId });
-        if (!customerId) {
-          refundMethodNote =
-            "Customer chose store credit, but the order has no linked Shopify customer account to credit -- refunded to the original payment method instead.";
-        } else {
-          const creditResult = await creditStoreCredit(admin, {
-            customerId,
-            amount: (netRefundCents / 100).toFixed(2),
-            currencyCode,
-          });
-          if (creditResult.ok) {
-            storeCreditIssued = true;
-          } else {
-            refundMethodNote = `Store credit issuance failed (${creditResult.error}) -- refunded to the original payment method instead.`;
-          }
-        }
-      }
-
-      if (!storeCreditIssued) {
-        const refundResult = await createShopifyRefund(admin, {
-          orderId: returnRequest.orderId,
-          lineItems: refundLineItems,
-          totalAmount: (netRefundCents / 100).toFixed(2),
-          idempotencyKey: `${returnRequest.id}-refund`,
-        });
-        if (!refundResult.ok) {
-          await db.returnRequest.update({
-            where: { id: returnRequest.id },
-            data: {
-              receivedAt: new Date(),
-              adminNote: `Return marked received, but the refund failed: ${refundResult.error}. Process it manually from the order.`,
-            },
-          });
-          return {
-            ok: false,
-            error: `Return marked received, but the refund failed: ${refundResult.error}. You'll need to process it manually from the order.`,
-          };
-        }
-        refundId = refundResult.refundId;
-      }
-    }
-
-    const balance = await getOrderOutstandingBalance(admin, { orderId: returnRequest.orderId });
-    const balanceDue = balance && balance.amount > 0.005 ? balance : null;
-
-    await db.returnRequest.update({
-      where: { id: returnRequest.id },
-      data: {
-        receivedAt: new Date(),
-        lifecycleStage: balanceDue ? "BALANCE_DUE" : "COMPLETED",
-        shopifyRefundId: refundId ?? returnRequest.shopifyRefundId,
-        refundIssuedAmount: netRefundCents > 0 ? netRefundCents / 100 : null,
-        balanceDueAmount: balanceDue ? balanceDue.amount : null,
-        balanceDueCurrency: balanceDue ? balanceDue.currencyCode : null,
-        adminNote: refundMethodNote,
-      },
-    });
-
-    if (returnRequest.customerEmail) {
-      await sendReturnReceivedEmail({
-        returnRequestId: returnRequest.id,
-        customerEmail: returnRequest.customerEmail,
-        orderName: returnRequest.orderName,
-        refundIssuedAmount: netRefundCents > 0 ? netRefundCents / 100 : null,
-        currencyCode,
-        balanceDueAmount: balanceDue ? balanceDue.amount : null,
-      }).catch((error) => console.error("[app.returns] failed to send received email", error));
-    }
-
-    return { ok: true };
-  }
-
-  if (intent === "sendInvoice") {
-    const invoiceResult = await sendOrderInvoice(admin, {
-      orderId: returnRequest.orderId,
-      to: returnRequest.customerEmail,
-    });
-    if (!invoiceResult.ok) {
-      return { ok: false, error: `Couldn't send the invoice: ${invoiceResult.error}` };
-    }
-
-    await db.returnRequest.update({
-      where: { id: returnRequest.id },
-      data: { lifecycleStage: "INVOICE_SENT", invoiceSentAt: new Date() },
-    });
-    if (returnRequest.customerEmail) {
-      await db.adminNotificationLog.create({
-        data: {
+  try {
+    if (intent === "deny") {
+      const note = String(formData.get("note") ?? "").trim() || null;
+      await db.returnRequest.update({
+        where: { id: returnRequest.id },
+        data: { status: "DENIED", decidedAt: new Date(), adminNote: note },
+      });
+      if (returnRequest.customerEmail) {
+        await sendReturnDeniedEmail({
           returnRequestId: returnRequest.id,
-          type: "RETURN_RECEIVED",
-          recipientEmail: returnRequest.customerEmail,
-          provider: "shopify",
-          status: "SENT",
-          errorMessage: "Invoice email sent via Shopify orderInvoiceSend.",
+          customerEmail: returnRequest.customerEmail,
+          orderName: returnRequest.orderName,
+          note,
+        }).catch((error) =>
+          console.error("[app.returns] failed to send denial email", error),
+        );
+      }
+      return { ok: true };
+    }
+
+    if (intent === "approve") {
+      const currencyCode = returnRequest.lineItems[0]?.currencyCode ?? "USD";
+
+      const exchangeLineItems = returnRequest.lineItems
+        .filter((li) => li.exchangeSelection)
+        .map((li) => ({
+          variantId: li.exchangeSelection!.targetVariantId,
+          quantity: li.quantity,
+        }));
+
+      const feeAmount =
+        returnRequest.shippingFeeAmount != null
+          ? Number(returnRequest.shippingFeeAmount)
+          : 0;
+
+      const returnResult = await createShopifyReturn(admin, {
+        orderId: returnRequest.orderId,
+        lineItems: returnRequest.lineItems.map((li) => ({
+          fulfillmentLineItemId: li.fulfillmentLineItemId,
+          quantity: li.quantity,
+          reasonCode: undefined,
+          reasonLabel: li.reason?.label,
+        })),
+        exchangeLineItems,
+        returnShippingFee:
+          feeAmount > 0 ? { amount: feeAmount.toFixed(2), currencyCode } : null,
+      });
+
+      if (!returnResult.ok) {
+        return {
+          ok: false,
+          error: `Couldn't create the Shopify return: ${returnResult.error}`,
+        };
+      }
+
+      await db.returnRequest.update({
+        where: { id: returnRequest.id },
+        data: {
+          status: "APPROVED",
+          decidedAt: new Date(),
+          shopifyReturnId: returnResult.returnId,
+          shopifyReturnName: returnResult.returnName,
+          lifecycleStage: "AWAITING_RECEIPT",
+          adminNote: null,
         },
       });
+
+      if (returnRequest.customerEmail) {
+        await sendReturnApprovedEmail({
+          returnRequestId: returnRequest.id,
+          customerEmail: returnRequest.customerEmail,
+          orderName: returnRequest.orderName,
+        }).catch((error) =>
+          console.error("[app.returns] failed to send approval email", error),
+        );
+      }
+
+      return { ok: true };
     }
 
-    return { ok: true };
-  }
+    if (intent === "markReceived") {
+      if (!returnRequest.shopifyReturnId) {
+        return {
+          ok: false,
+          error: "This request has no Shopify return to process yet.",
+        };
+      }
 
-  return { ok: false, error: "Unknown action." };
+      const processResult = await processShopifyReturn(admin, {
+        returnId: returnRequest.shopifyReturnId,
+      });
+      if (!processResult.ok) {
+        return {
+          ok: false,
+          error: `Couldn't mark the return as received: ${processResult.error}`,
+        };
+      }
+
+      const { byLineItemId } =
+        await computeReturnRefundBreakdown(returnRequest);
+      const currencyCode = returnRequest.lineItems[0]?.currencyCode ?? "USD";
+
+      // Only plain-return items get a manual refund here -- exchanged items'
+      // value is netted natively by Shopify into the order's own balance
+      // (read back below via getOrderOutstandingBalance), not computed by us.
+      const plainReturnItems = returnRequest.lineItems.filter(
+        (li) => !li.exchangeSelection,
+      );
+      let refundOnlyCents = 0;
+      const refundLineItems: Array<{
+        shopifyLineItemId: string;
+        quantity: number;
+      }> = [];
+      for (const li of plainReturnItems) {
+        const recalculated =
+          byLineItemId.get(li.id)?.recalculatedRefund ??
+          Number(li.unitPrice) * li.quantity;
+        refundOnlyCents += Math.round(recalculated * 100);
+        refundLineItems.push({
+          shopifyLineItemId: li.shopifyLineItemId,
+          quantity: li.quantity,
+        });
+      }
+
+      const feeCents =
+        returnRequest.shippingFeeAmount != null
+          ? Math.round(Number(returnRequest.shippingFeeAmount) * 100)
+          : 0;
+      // The fee only comes out of a refund we're actually issuing -- an
+      // exchange-only fee is expected to already be netted by Shopify via the
+      // returnShippingFee we set at approval time.
+      const netRefundCents =
+        plainReturnItems.length > 0
+          ? Math.max(0, refundOnlyCents - feeCents)
+          : 0;
+
+      let refundId: string | null = null;
+      let refundMethodNote: string | null = null;
+      if (netRefundCents > 0) {
+        let storeCreditIssued = false;
+
+        if (returnRequest.refundMethod === "STORE_CREDIT") {
+          const customerId = await getOrderCustomerId(admin, {
+            orderId: returnRequest.orderId,
+          });
+          if (!customerId) {
+            refundMethodNote =
+              "Customer chose store credit, but the order has no linked Shopify customer account to credit -- refunded to the original payment method instead.";
+          } else {
+            const creditResult = await creditStoreCredit(admin, {
+              customerId,
+              amount: (netRefundCents / 100).toFixed(2),
+              currencyCode,
+            });
+            if (creditResult.ok) {
+              storeCreditIssued = true;
+            } else {
+              refundMethodNote = `Store credit issuance failed (${creditResult.error}) -- refunded to the original payment method instead.`;
+            }
+          }
+        }
+
+        if (!storeCreditIssued) {
+          const refundResult = await createShopifyRefund(admin, {
+            orderId: returnRequest.orderId,
+            lineItems: refundLineItems,
+            totalAmount: (netRefundCents / 100).toFixed(2),
+            idempotencyKey: `${returnRequest.id}-refund`,
+          });
+          if (!refundResult.ok) {
+            await db.returnRequest.update({
+              where: { id: returnRequest.id },
+              data: {
+                receivedAt: new Date(),
+                adminNote: `Return marked received, but the refund failed: ${refundResult.error}. Process it manually from the order.`,
+              },
+            });
+            return {
+              ok: false,
+              error: `Return marked received, but the refund failed: ${refundResult.error}. You'll need to process it manually from the order.`,
+            };
+          }
+          refundId = refundResult.refundId;
+        }
+      }
+
+      const balance = await getOrderOutstandingBalance(admin, {
+        orderId: returnRequest.orderId,
+      });
+      const balanceDue = balance && balance.amount > 0.005 ? balance : null;
+
+      await db.returnRequest.update({
+        where: { id: returnRequest.id },
+        data: {
+          receivedAt: new Date(),
+          lifecycleStage: balanceDue ? "BALANCE_DUE" : "COMPLETED",
+          shopifyRefundId: refundId ?? returnRequest.shopifyRefundId,
+          refundIssuedAmount: netRefundCents > 0 ? netRefundCents / 100 : null,
+          balanceDueAmount: balanceDue ? balanceDue.amount : null,
+          balanceDueCurrency: balanceDue ? balanceDue.currencyCode : null,
+          adminNote: refundMethodNote,
+        },
+      });
+
+      if (returnRequest.customerEmail) {
+        await sendReturnReceivedEmail({
+          returnRequestId: returnRequest.id,
+          customerEmail: returnRequest.customerEmail,
+          orderName: returnRequest.orderName,
+          refundIssuedAmount: netRefundCents > 0 ? netRefundCents / 100 : null,
+          currencyCode,
+          balanceDueAmount: balanceDue ? balanceDue.amount : null,
+        }).catch((error) =>
+          console.error("[app.returns] failed to send received email", error),
+        );
+      }
+
+      return { ok: true };
+    }
+
+    if (intent === "sendInvoice") {
+      const invoiceResult = await sendOrderInvoice(admin, {
+        orderId: returnRequest.orderId,
+        to: returnRequest.customerEmail,
+      });
+      if (!invoiceResult.ok) {
+        return {
+          ok: false,
+          error: `Couldn't send the invoice: ${invoiceResult.error}`,
+        };
+      }
+
+      await db.returnRequest.update({
+        where: { id: returnRequest.id },
+        data: { lifecycleStage: "INVOICE_SENT", invoiceSentAt: new Date() },
+      });
+      if (returnRequest.customerEmail) {
+        await db.adminNotificationLog.create({
+          data: {
+            returnRequestId: returnRequest.id,
+            type: "RETURN_RECEIVED",
+            recipientEmail: returnRequest.customerEmail,
+            provider: "shopify",
+            status: "SENT",
+            errorMessage: "Invoice email sent via Shopify orderInvoiceSend.",
+          },
+        });
+      }
+
+      return { ok: true };
+    }
+
+    return { ok: false, error: "Unknown action." };
+  } catch (error) {
+    // Any unexpected failure -- a missing access scope, a transient Shopify
+    // API error, anything -- surfaces here as a clean, actionable message
+    // in the admin UI instead of crashing the whole action into a raw 500
+    // that only shows up in the host's server logs.
+    console.error(`[app.returns.$id] action "${intent}" failed`, error);
+    const message = error instanceof Error ? error.message : String(error);
+    return {
+      ok: false,
+      error: `Something went wrong: ${message}. Please try again, or check the order directly in Shopify admin.`,
+    };
+  }
 };
 
 const STAGE_LABELS: Record<string, string> = {
@@ -303,12 +391,18 @@ const STAGE_LABELS: Record<string, string> = {
 };
 
 // FulfillmentOrder.status values, mapped to what the exchange step should say.
-function exchangeShippedLabel(status: string | null): { label: string; done: boolean } {
+function exchangeShippedLabel(status: string | null): {
+  label: string;
+  done: boolean;
+} {
   switch (status) {
     case "CLOSED":
       return { label: "Exchange Shipped", done: true };
     case "ON_HOLD":
-      return { label: "Exchange on hold -- awaiting return receipt", done: false };
+      return {
+        label: "Exchange on hold -- awaiting return receipt",
+        done: false,
+      };
     case "CANCELLED":
       return { label: "Exchange cancelled", done: false };
     case "OPEN":
@@ -333,13 +427,30 @@ function LifecycleStepper({
   balanceDueCurrency: string | null;
   exchangeFulfillmentStatus: string | null;
 }) {
-  const order = ["AWAITING_RECEIPT", "BALANCE_DUE", "INVOICE_SENT", "COMPLETED"];
+  const order = [
+    "AWAITING_RECEIPT",
+    "BALANCE_DUE",
+    "INVOICE_SENT",
+    "COMPLETED",
+  ];
   const currentIndex = lifecycleStage ? order.indexOf(lifecycleStage) : -1;
 
-  const steps: Array<{ key: string; label: string }> = [{ key: "ACCEPTED", label: "Return/Exchange Accepted" }];
-  steps.push({ key: "AWAITING_RECEIPT", label: "Waiting for return to be received and inspected" });
-  if (balanceDueAmount != null || lifecycleStage === "BALANCE_DUE" || lifecycleStage === "INVOICE_SENT") {
-    steps.push({ key: "INVOICE_SENT", label: "Invoice sent (Awaiting Payment)" });
+  const steps: Array<{ key: string; label: string }> = [
+    { key: "ACCEPTED", label: "Return/Exchange Accepted" },
+  ];
+  steps.push({
+    key: "AWAITING_RECEIPT",
+    label: "Waiting for return to be received and inspected",
+  });
+  if (
+    balanceDueAmount != null ||
+    lifecycleStage === "BALANCE_DUE" ||
+    lifecycleStage === "INVOICE_SENT"
+  ) {
+    steps.push({
+      key: "INVOICE_SENT",
+      label: "Invoice sent (Awaiting Payment)",
+    });
   }
   steps.push({ key: "COMPLETED", label: "Completed" });
 
@@ -350,21 +461,34 @@ function LifecycleStepper({
       </Text>
       <BlockStack gap="150">
         {steps.map((step) => {
-          const stepIndex = step.key === "ACCEPTED" ? 0 : step.key === "INVOICE_SENT" ? order.indexOf("BALANCE_DUE") : order.indexOf(step.key);
+          const stepIndex =
+            step.key === "ACCEPTED"
+              ? 0
+              : step.key === "INVOICE_SENT"
+                ? order.indexOf("BALANCE_DUE")
+                : order.indexOf(step.key);
           const isCurrent =
             step.key === "ACCEPTED"
               ? currentIndex === -1
               : step.key === "INVOICE_SENT"
-                ? lifecycleStage === "BALANCE_DUE" || lifecycleStage === "INVOICE_SENT"
+                ? lifecycleStage === "BALANCE_DUE" ||
+                  lifecycleStage === "INVOICE_SENT"
                 : lifecycleStage === step.key;
-          const isDone = step.key === "ACCEPTED" ? currentIndex >= 0 : currentIndex > stepIndex || (step.key === "INVOICE_SENT" && lifecycleStage === "COMPLETED");
+          const isDone =
+            step.key === "ACCEPTED"
+              ? currentIndex >= 0
+              : currentIndex > stepIndex ||
+                (step.key === "INVOICE_SENT" && lifecycleStage === "COMPLETED");
           return (
             <InlineStack key={step.key} gap="200" blockAlign="center">
-              <Badge tone={isDone ? "success" : isCurrent ? "attention" : undefined}>
+              <Badge
+                tone={isDone ? "success" : isCurrent ? "attention" : undefined}
+              >
                 {isDone ? "Done" : isCurrent ? "Current" : "Pending"}
               </Badge>
               <Text as="span">
-                {step.key === "INVOICE_SENT" && lifecycleStage === "INVOICE_SENT"
+                {step.key === "INVOICE_SENT" &&
+                lifecycleStage === "INVOICE_SENT"
                   ? STAGE_LABELS.INVOICE_SENT
                   : step.label}
               </Text>
@@ -373,10 +497,14 @@ function LifecycleStepper({
         })}
         {hasExchange &&
           (() => {
-            const { label, done } = exchangeShippedLabel(exchangeFulfillmentStatus);
+            const { label, done } = exchangeShippedLabel(
+              exchangeFulfillmentStatus,
+            );
             return (
               <InlineStack gap="200" blockAlign="center">
-                <Badge tone={done ? "success" : undefined}>{done ? "Done" : "Pending"}</Badge>
+                <Badge tone={done ? "success" : undefined}>
+                  {done ? "Done" : "Pending"}
+                </Badge>
                 <Text as="span">{label}</Text>
               </InlineStack>
             );
@@ -384,7 +512,8 @@ function LifecycleStepper({
       </BlockStack>
       {balanceDueAmount != null && (
         <Text as="p" tone="caution">
-          Customer owes {Number(balanceDueAmount).toFixed(2)} {balanceDueCurrency}.
+          Customer owes {Number(balanceDueAmount).toFixed(2)}{" "}
+          {balanceDueCurrency}.
         </Text>
       )}
     </BlockStack>
@@ -392,15 +521,24 @@ function LifecycleStepper({
 }
 
 export default function ReturnDetail() {
-  const { returnRequest, refundBreakdown, hasExchange, exchangeFulfillmentStatus, photoUrls } =
-    useLoaderData<typeof loader>();
+  const {
+    returnRequest,
+    refundBreakdown,
+    hasExchange,
+    exchangeFulfillmentStatus,
+    photoUrls,
+  } = useLoaderData<typeof loader>();
   const navigation = useNavigation();
   const isSubmitting = navigation.state === "submitting";
   const [denyNote, setDenyNote] = useState("");
 
   const canDecide = returnRequest.status === "PENDING_REVIEW";
-  const canMarkReceived = returnRequest.status === "APPROVED" && returnRequest.lifecycleStage === "AWAITING_RECEIPT";
-  const canSendInvoice = returnRequest.status === "APPROVED" && returnRequest.lifecycleStage === "BALANCE_DUE";
+  const canMarkReceived =
+    returnRequest.status === "APPROVED" &&
+    returnRequest.lifecycleStage === "AWAITING_RECEIPT";
+  const canSendInvoice =
+    returnRequest.status === "APPROVED" &&
+    returnRequest.lifecycleStage === "BALANCE_DUE";
 
   return (
     <Page backAction={{ url: "/app/returns" }}>
@@ -409,7 +547,11 @@ export default function ReturnDetail() {
         <Layout.Section>
           <BlockStack gap="400">
             {returnRequest.adminNote && (
-              <Banner tone={returnRequest.status === "DENIED" ? "critical" : "warning"}>
+              <Banner
+                tone={
+                  returnRequest.status === "DENIED" ? "critical" : "warning"
+                }
+              >
                 {returnRequest.adminNote}
               </Banner>
             )}
@@ -433,7 +575,8 @@ export default function ReturnDetail() {
                   </Badge>
                 </InlineStack>
                 <Text as="p" tone="subdued">
-                  {returnRequest.customerEmail ?? "No email"} · {returnRequest.customerPhone ?? "No phone"}
+                  {returnRequest.customerEmail ?? "No email"} ·{" "}
+                  {returnRequest.customerPhone ?? "No phone"}
                 </Text>
                 {returnRequest.shopifyReturnName && (
                   <Text as="p" tone="subdued">
@@ -467,10 +610,13 @@ export default function ReturnDetail() {
                     <BlockStack key={item.id} gap="100">
                       <Text as="p" fontWeight="semibold">
                         {item.title}
-                        {item.variantTitle ? ` — ${item.variantTitle}` : ""} × {item.quantity}
+                        {item.variantTitle
+                          ? ` — ${item.variantTitle}`
+                          : ""} × {item.quantity}
                       </Text>
                       <Text as="p" tone="subdued">
-                        Condition: {item.conditionOption?.label ?? "—"} · Reason: {item.reason?.label ?? "—"}
+                        Condition: {item.conditionOption?.label ?? "—"} ·
+                        Reason: {item.reason?.label ?? "—"}
                       </Text>
                       {item.exchangeSelection ? (
                         <Text as="p">
@@ -479,15 +625,30 @@ export default function ReturnDetail() {
                             ? ` — ${item.exchangeSelection.targetVariantTitle}`
                             : ""}{" "}
                           ({item.exchangeSelection.direction}{" "}
-                          {item.exchangeSelection.priceDifference.toString()} {item.exchangeSelection.currencyCode})
+                          {item.exchangeSelection.priceDifference.toString()}{" "}
+                          {item.exchangeSelection.currencyCode})
                         </Text>
                       ) : (
                         <Text as="p">
-                          Refund: {(reallocation?.recalculatedRefund ?? naiveRefund).toFixed(2)} {item.currencyCode}
+                          Refund:{" "}
+                          {(
+                            reallocation?.recalculatedRefund ?? naiveRefund
+                          ).toFixed(2)}{" "}
+                          {item.currencyCode}
                           {reallocation?.hadDiscount && (
-                            <Text as="span" tone={reallocation.stillQualifies === false ? "caution" : "subdued"}>
+                            <Text
+                              as="span"
+                              tone={
+                                reallocation.stillQualifies === false
+                                  ? "caution"
+                                  : "subdued"
+                              }
+                            >
                               {" "}
-                              ({reallocation.matchedDiscountTitle ? `"${reallocation.matchedDiscountTitle}" -- ` : ""}
+                              (
+                              {reallocation.matchedDiscountTitle
+                                ? `"${reallocation.matchedDiscountTitle}" -- `
+                                : ""}
                               {reallocation.note})
                             </Text>
                           )}
@@ -504,7 +665,11 @@ export default function ReturnDetail() {
                 <Text as="h2" variant="headingMd">
                   Photos
                 </Text>
-                {returnRequest.photos.length === 0 && <Text as="p" tone="subdued">None uploaded.</Text>}
+                {returnRequest.photos.length === 0 && (
+                  <Text as="p" tone="subdued">
+                    None uploaded.
+                  </Text>
+                )}
                 <InlineStack gap="300">
                   {returnRequest.photos.map((photo) => {
                     const url = photoUrls[photo.shopifyFileId];
@@ -538,13 +703,18 @@ export default function ReturnDetail() {
                   Shipping
                 </Text>
                 <Text as="p">
-                  {returnRequest.shippingMethod === "RETURN_LABEL" ? "Return label requested" : "Customer's own carrier"}
+                  {returnRequest.shippingMethod === "RETURN_LABEL"
+                    ? "Return label requested"
+                    : "Customer's own carrier"}
                   {" — "}
                   {returnRequest.shippingFeeAmount?.toString() ?? "0.00"} fee
                 </Text>
                 {returnRequest.refundMethod && (
                   <Text as="p" tone="subdued">
-                    Refund method: {returnRequest.refundMethod === "STORE_CREDIT" ? "Store credit" : "Original payment method"}
+                    Refund method:{" "}
+                    {returnRequest.refundMethod === "STORE_CREDIT"
+                      ? "Store credit"
+                      : "Original payment method"}
                   </Text>
                 )}
                 {returnRequest.refundIssuedAmount != null && (
@@ -594,8 +764,9 @@ export default function ReturnDetail() {
                     Next step
                   </Text>
                   <Text as="p" tone="subdued">
-                    Once the physical item(s) arrive and have been inspected, confirm receipt to restock inventory,
-                    release the exchange replacement for fulfillment, and issue any refund due.
+                    Once the physical item(s) arrive and have been inspected,
+                    confirm receipt to restock inventory, release the exchange
+                    replacement for fulfillment, and issue any refund due.
                   </Text>
                   <Form method="post">
                     <input type="hidden" name="intent" value="markReceived" />
@@ -614,9 +785,10 @@ export default function ReturnDetail() {
                     Next step
                   </Text>
                   <Text as="p" tone="subdued">
-                    The exchange has a remaining balance of {returnRequest.balanceDueAmount?.toString()}{" "}
-                    {returnRequest.balanceDueCurrency}. Send the customer an invoice with a payment link when you're
-                    ready to collect it.
+                    The exchange has a remaining balance of{" "}
+                    {returnRequest.balanceDueAmount?.toString()}{" "}
+                    {returnRequest.balanceDueCurrency}. Send the customer an
+                    invoice with a payment link when you're ready to collect it.
                   </Text>
                   <Form method="post">
                     <input type="hidden" name="intent" value="sendInvoice" />
