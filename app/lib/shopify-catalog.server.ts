@@ -35,12 +35,18 @@ const PRODUCT_FIELDS = `#graphql
   }
 `;
 
+// Shopify's "published_status:published" search-query filter is documented
+// as unreliable for this (Shopify's own community has reported it still
+// returning unpublished products), so eligibility is instead checked on the
+// field itself: onlineStoreUrl is null precisely when a product isn't
+// published to the Online Store sales channel -- e.g. POS-only products.
 const SEARCH_PRODUCTS_QUERY = `#graphql
   ${PRODUCT_FIELDS}
   query SearchCatalogProducts($query: String!) {
-    products(first: 12, query: $query) {
+    products(first: 25, query: $query) {
       nodes {
         ...CatalogProductFields
+        onlineStoreUrl
       }
     }
   }
@@ -83,7 +89,10 @@ export async function searchCatalogProducts(
   });
   const json: any = await response.json();
   const nodes = json?.data?.products?.nodes ?? [];
-  return nodes.map(toCatalogProduct);
+  return nodes
+    .filter((node: any) => node.onlineStoreUrl)
+    .slice(0, 12)
+    .map(toCatalogProduct);
 }
 
 const VARIANT_BY_ID_QUERY = `#graphql
@@ -100,6 +109,7 @@ const VARIANT_BY_ID_QUERY = `#graphql
           featuredImage {
             url
           }
+          onlineStoreUrl
         }
       }
     }
@@ -114,7 +124,9 @@ export type CatalogVariantWithProduct = CatalogVariant & {
 
 /**
  * Always re-fetches the variant's price live from Shopify -- never trust a
- * client-submitted price for a money calculation.
+ * client-submitted price for a money calculation. Also re-checks Online
+ * Store publication server-side (not just at search time) in case a variant
+ * ID for a POS-only product is ever submitted directly.
  */
 export async function getVariantById(
   admin: AdminApiContext,
@@ -123,7 +135,7 @@ export async function getVariantById(
   const response = await admin.graphql(VARIANT_BY_ID_QUERY, { variables: { id: variantId } });
   const json: any = await response.json();
   const node = json?.data?.node;
-  if (!node) return null;
+  if (!node || !node.product?.onlineStoreUrl) return null;
 
   return {
     id: node.id,
