@@ -26,23 +26,26 @@ export async function quoteShippingFees(
     db.returnLabelFeeConfig.findUnique({ where: { shopDomain } }),
   ]);
 
+  const restockingFeeActive = restocking?.isActive ?? true;
   const restockingFeeType = restocking?.feeType ?? "PERCENTAGE";
   const restockingFeeValue = restocking?.value ?? 0;
-  const restockingFeeAmount =
-    restockingFeeType === "PERCENTAGE"
+  const restockingFeeAmount = restockingFeeActive
+    ? restockingFeeType === "PERCENTAGE"
       ? (refundBaseAmount * Number(restockingFeeValue)) / 100
-      : Number(restockingFeeValue);
+      : Number(restockingFeeValue)
+    : 0;
 
-  const labelFeePerItem = Number(label?.amountPerItem ?? 5.99);
+  const labelFeeActive = label?.isActive ?? true;
+  const labelFeePerItem = labelFeeActive ? Number(label?.amountPerItem ?? 5.99) : 0;
   const labelFeeAmount = labelFeePerItem * itemCount;
 
   return {
     restockingFeeAmount: restockingFeeAmount.toFixed(2),
-    restockingFeeAvailable: restocking?.isActive ?? true,
+    restockingFeeAvailable: restockingFeeActive,
     restockingFeeType,
     restockingFeeValue: restockingFeeValue.toString(),
     labelFeeAmount: labelFeeAmount.toFixed(2),
     labelFeePerItem: labelFeePerItem.toFixed(2),
-    labelFeeAvailable: label?.isActive ?? true,
+    labelFeeAvailable: labelFeeActive,
   };
 }

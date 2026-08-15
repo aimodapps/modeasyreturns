@@ -95,8 +95,11 @@ export default function ShippingStep() {
               I'll use my own carrier
             </span>
             <span style={styles.optionMessage}>
-              A restocking fee of {quote.restockingFeeAmount} {currency} applies
-              {quote.restockingFeeType === "PERCENTAGE" ? ` (${quote.restockingFeeValue}%)` : ""}.
+              {quote.restockingFeeAvailable
+                ? `A restocking fee of ${quote.restockingFeeAmount} ${currency} applies${
+                    quote.restockingFeeType === "PERCENTAGE" ? ` (${quote.restockingFeeValue}%)` : ""
+                  }.`
+                : "No restocking fee applies."}
             </span>
           </label>
 
@@ -112,8 +115,9 @@ export default function ShippingStep() {
               I need a return label
             </span>
             <span style={styles.optionMessage}>
-              {quote.labelFeePerItem} {currency} per item — {quote.labelFeeAmount} {currency} total for this
-              return.
+              {quote.labelFeeAvailable
+                ? `${quote.labelFeePerItem} ${currency} per item — ${quote.labelFeeAmount} ${currency} total for this return.`
+                : "No return label fee applies."}
             </span>
           </label>
 
