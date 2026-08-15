@@ -1,5 +1,10 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
-import { useLoaderData, useNavigation, Form } from "@remix-run/react";
+import {
+  useLoaderData,
+  useActionData,
+  useNavigation,
+  Form,
+} from "@remix-run/react";
 import {
   Page,
   Layout,
@@ -368,6 +373,35 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       return { ok: true };
     }
 
+    if (intent === "forceComplete") {
+      if (returnRequest.status !== "APPROVED") {
+        return {
+          ok: false,
+          error: "Only an approved request can be marked completed this way.",
+        };
+      }
+      const note = String(formData.get("note") ?? "").trim();
+
+      // Escape hatch for when the refund/exchange was already handled
+      // directly in Shopify admin (or anywhere outside this app) -- doesn't
+      // touch Shopify at all, just closes the request out here so it stops
+      // showing as stuck. Never used automatically; staff opt into this.
+      await db.returnRequest.update({
+        where: { id: returnRequest.id },
+        data: {
+          receivedAt: returnRequest.receivedAt ?? new Date(),
+          lifecycleStage: "COMPLETED",
+          balanceDueAmount: null,
+          balanceDueCurrency: null,
+          adminNote:
+            note ||
+            "Marked completed manually -- handled directly in Shopify admin, outside this app.",
+        },
+      });
+
+      return { ok: true };
+    }
+
     return { ok: false, error: "Unknown action." };
   } catch (error) {
     // Any unexpected failure -- a missing access scope, a transient Shopify
@@ -528,9 +562,11 @@ export default function ReturnDetail() {
     exchangeFulfillmentStatus,
     photoUrls,
   } = useLoaderData<typeof loader>();
+  const actionData = useActionData<typeof action>();
   const navigation = useNavigation();
   const isSubmitting = navigation.state === "submitting";
   const [denyNote, setDenyNote] = useState("");
+  const [forceCompleteNote, setForceCompleteNote] = useState("");
 
   const canDecide = returnRequest.status === "PENDING_REVIEW";
   const canMarkReceived =
@@ -546,6 +582,10 @@ export default function ReturnDetail() {
       <Layout>
         <Layout.Section>
           <BlockStack gap="400">
+            {actionData && "error" in actionData && actionData.error && (
+              <Banner tone="critical">{actionData.error}</Banner>
+            )}
+
             {returnRequest.adminNote && (
               <Banner
                 tone={
@@ -799,6 +839,44 @@ export default function ReturnDetail() {
                 </BlockStack>
               </Card>
             )}
+
+            {returnRequest.status === "APPROVED" &&
+              returnRequest.lifecycleStage !== "COMPLETED" && (
+                <Card>
+                  <BlockStack gap="300">
+                    <Text as="h2" variant="headingMd">
+                      Already handled outside this app?
+                    </Text>
+                    <Text as="p" tone="subdued">
+                      If the refund, exchange, or invoice for this request was
+                      already taken care of directly in Shopify admin (or
+                      anywhere else), use this to close it out here without
+                      repeating those actions. This does not touch Shopify at
+                      all -- it only updates this request's status.
+                    </Text>
+                    <Form method="post">
+                      <input
+                        type="hidden"
+                        name="intent"
+                        value="forceComplete"
+                      />
+                      <BlockStack gap="200">
+                        <TextField
+                          label="Note (optional, kept for your records)"
+                          name="note"
+                          value={forceCompleteNote}
+                          onChange={setForceCompleteNote}
+                          multiline={2}
+                          autoComplete="off"
+                        />
+                        <Button submit loading={isSubmitting}>
+                          Mark as completed
+                        </Button>
+                      </BlockStack>
+                    </Form>
+                  </BlockStack>
+                </Card>
+              )}
           </BlockStack>
         </Layout.Section>
       </Layout>
