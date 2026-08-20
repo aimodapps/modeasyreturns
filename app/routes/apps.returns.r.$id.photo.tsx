@@ -91,6 +91,9 @@ export default function PhotoStep() {
   const navigation = useNavigation();
   const isSubmitting = navigation.state === "submitting";
   const hasPhoto = returnRequest.photos.length > 0;
+  const itemCount = returnRequest.lineItems.length;
+  const isMultiItem = itemCount > 1;
+  const photosStillNeeded = Math.max(0, itemCount - returnRequest.photos.length);
 
   return (
     <div style={styles.page}>
@@ -98,16 +101,36 @@ export default function PhotoStep() {
       <div style={styles.card} className="portal-card">
         <PortalLogo logoUrl={branding.logoUrl} logoWidthPx={branding.logoWidthPx} />
         <p style={styles.breadcrumb}>Order {returnRequest.orderName}</p>
-        <h1 style={styles.heading}>Please share a picture showing the perfume is not used</h1>
+        <h1 style={styles.heading}>
+          {isMultiItem
+            ? "Please share pictures showing each item is not used"
+            : "Please share a picture showing the perfume is not used"}
+        </h1>
         <p style={styles.subheading}>
-          A clear photo of the bottle (and fill level, if visible) helps us process your return
-          quickly.
+          {isMultiItem
+            ? `A clear photo of each bottle (and fill level, if visible) helps us process your return quickly. You're returning ${itemCount} items, so please add one photo per item -- each upload below is added to this request, none of them replace each other.`
+            : "A clear photo of the bottle (and fill level, if visible) helps us process your return quickly."}
         </p>
+
+        {isMultiItem && (
+          <ul style={{ ...styles.itemList, marginBottom: 16 }}>
+            {returnRequest.lineItems.map((item) => (
+              <li key={item.id} style={{ fontSize: 13, color: "#6b6b6b" }}>
+                {item.title}
+                {item.variantTitle ? ` — ${item.variantTitle}` : ""}
+              </li>
+            ))}
+          </ul>
+        )}
 
         {hasPhoto && (
           <p style={{ fontSize: 13, color: "#1a7f37", marginBottom: 16 }}>
-            ✓ Photo received ({returnRequest.photos.length}).{" "}
-            {returnRequest.photos[0].originalFilename}
+            ✓ {returnRequest.photos.length} photo{returnRequest.photos.length === 1 ? "" : "s"} added
+            so far.
+            {isMultiItem &&
+              (photosStillNeeded > 0
+                ? ` We recommend ${photosStillNeeded} more, one per remaining item.`
+                : " That's one for every item -- thank you!")}
           </p>
         )}
 
@@ -118,7 +141,7 @@ export default function PhotoStep() {
           style={styles.form}
         >
           <label style={styles.label}>
-            {hasPhoto ? "Upload a different photo (optional)" : "Photo"}
+            {hasPhoto ? "Add another photo (optional)" : "Photo"}
             <input type="file" name="photo" accept="image/*" required={!hasPhoto} />
           </label>
 
@@ -126,7 +149,7 @@ export default function PhotoStep() {
             {isSubmitting
               ? "Uploading…"
               : hasPhoto
-                ? "Continue (or choose a new photo above to replace it)"
+                ? "Continue (or add another photo above first)"
                 : "Upload photo & continue"}
           </button>
         </Form>

@@ -599,9 +599,17 @@ export default function ReturnDetail() {
             <Card>
               <BlockStack gap="200">
                 <InlineStack align="space-between">
-                  <Text as="h2" variant="headingMd">
-                    {returnRequest.orderName}
-                  </Text>
+                  <InlineStack gap="200" blockAlign="center">
+                    <Text as="h2" variant="headingMd">
+                      {returnRequest.orderName}
+                    </Text>
+                    <PolarisLink
+                      url={`shopify:admin/orders/${returnRequest.orderId.replace("gid://shopify/Order/", "")}`}
+                      target="_blank"
+                    >
+                      View order
+                    </PolarisLink>
+                  </InlineStack>
                   <Badge
                     tone={
                       returnRequest.status === "APPROVED"
