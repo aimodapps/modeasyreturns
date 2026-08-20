@@ -48,38 +48,50 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     return { error: "That photo is too large. Please upload a file under 8MB." };
   }
 
-  const file = formData.get("photo");
+  const files = formData.getAll("photo").filter((f): f is File => f instanceof File && f.size > 0);
   const hasExistingPhoto = returnRequest.photos.length > 0;
 
-  if (!(file instanceof File) || file.size === 0) {
+  if (files.length === 0) {
     if (hasExistingPhoto) {
       return redirect(`/apps/returns/r/${returnRequest.id}/reason`);
     }
-    return { error: "Please choose a photo to upload." };
+    return { error: "Please choose at least one photo to upload." };
   }
-  if (!file.type.startsWith("image/")) {
-    return { error: "Please upload an image file (JPG, PNG, or HEIC)." };
+  const invalidFile = files.find((f) => !f.type.startsWith("image/"));
+  if (invalidFile) {
+    return { error: "Please upload image files only (JPG, PNG, or HEIC)." };
   }
 
-  try {
-    const { shopifyFileId } = await uploadReturnPhoto(admin, {
-      file,
-      filename: file.name || "photo.jpg",
-      orderName: returnRequest.orderName,
-    });
-    await db.photoUpload.create({
-      data: {
-        returnRequestId: returnRequest.id,
-        shopifyFileId,
-        originalFilename: file.name || null,
-      },
-    });
-  } catch (error) {
-    if (error instanceof PhotoUploadError) {
-      return { error: error.message };
+  // Uploaded one at a time (not in parallel) so a failure partway through
+  // still leaves the earlier ones saved -- the customer can just retry the
+  // remainder rather than losing everything already uploaded in this batch.
+  let uploadedCount = 0;
+  for (const file of files) {
+    try {
+      const { shopifyFileId } = await uploadReturnPhoto(admin, {
+        file,
+        filename: file.name || "photo.jpg",
+        orderName: returnRequest.orderName,
+      });
+      await db.photoUpload.create({
+        data: {
+          returnRequestId: returnRequest.id,
+          shopifyFileId,
+          originalFilename: file.name || null,
+        },
+      });
+      uploadedCount += 1;
+    } catch (error) {
+      const reason = error instanceof PhotoUploadError ? error.message : "upload failed";
+      console.error("[apps.returns.photo] upload error", file.name, error);
+      const remaining = files.length - uploadedCount;
+      return {
+        error:
+          uploadedCount > 0
+            ? `Added ${uploadedCount} photo(s), but "${file.name || "one file"}" failed (${reason}). ${remaining > 1 ? "Please try the rest again." : "Please try it again."}`
+            : `We couldn't upload "${file.name || "that photo"}": ${reason}. Please try again.`,
+      };
     }
-    console.error("[apps.returns.photo] unhandled upload error", error);
-    return { error: "We couldn't upload that photo. Please try again." };
   }
 
   return redirect(`/apps/returns/r/${returnRequest.id}/reason`);
@@ -141,16 +153,20 @@ export default function PhotoStep() {
           style={styles.form}
         >
           <label style={styles.label}>
-            {hasPhoto ? "Add another photo (optional)" : "Photo"}
-            <input type="file" name="photo" accept="image/*" required={!hasPhoto} />
+            {hasPhoto
+              ? "Add more photos (optional -- select multiple at once if you have more than one)"
+              : isMultiItem
+                ? "Photos (select all of them at once -- hold Ctrl/Cmd while choosing files, or Shift to select a range)"
+                : "Photo"}
+            <input type="file" name="photo" accept="image/*" multiple required={!hasPhoto} />
           </label>
 
           <button style={styles.button} type="submit" disabled={isSubmitting}>
             {isSubmitting
               ? "Uploading…"
               : hasPhoto
-                ? "Continue (or add another photo above first)"
-                : "Upload photo & continue"}
+                ? "Continue (or add more photos above first)"
+                : "Upload photo(s) & continue"}
           </button>
         </Form>
 
