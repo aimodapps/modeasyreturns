@@ -64,7 +64,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     data: { shippingMethod, shippingFeeAmount },
   });
 
-  return redirect(`/apps/returns/r/${returnRequest.id}/refund-method`);
+  return redirect(`/apps/returns/r/${returnRequest.id}/phone`);
 };
 
 export default function ShippingStep() {

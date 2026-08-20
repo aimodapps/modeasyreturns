@@ -33,6 +33,7 @@ import {
   sendOrderInvoice,
   getOrderCustomerId,
   creditStoreCredit,
+  updateOrderShippingPhone,
 } from "../lib/shopify-returns.server";
 import { getReturnPhotoUrls } from "../lib/photo-upload.server";
 import {
@@ -176,6 +177,22 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         };
       }
 
+      // Pushed to the order's shipping address only now, at approval --
+      // never earlier -- since a DRAFT/PENDING_REVIEW request might still be
+      // denied and shouldn't touch the live order. A failure here doesn't
+      // block the approval itself (the Shopify Return already exists); it's
+      // just surfaced as a note so staff can add the number manually.
+      let phoneUpdateNote: string | null = null;
+      if (returnRequest.returnContactPhone) {
+        const phoneResult = await updateOrderShippingPhone(admin, {
+          orderId: returnRequest.orderId,
+          phone: returnRequest.returnContactPhone,
+        });
+        if (!phoneResult.ok) {
+          phoneUpdateNote = `Return approved, but couldn't add the customer's phone number to the order's shipping address: ${phoneResult.error}`;
+        }
+      }
+
       await db.returnRequest.update({
         where: { id: returnRequest.id },
         data: {
@@ -184,7 +201,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
           shopifyReturnId: returnResult.returnId,
           shopifyReturnName: returnResult.returnName,
           lifecycleStage: "AWAITING_RECEIPT",
-          adminNote: null,
+          adminNote: phoneUpdateNote,
         },
       });
 
@@ -757,6 +774,11 @@ export default function ReturnDetail() {
                   {" — "}
                   {returnRequest.shippingFeeAmount?.toString() ?? "0.00"} fee
                 </Text>
+                {returnRequest.returnContactPhone && (
+                  <Text as="p" tone="subdued">
+                    Contact phone for pickup: {returnRequest.returnContactPhone}
+                  </Text>
+                )}
                 {returnRequest.refundMethod && (
                   <Text as="p" tone="subdued">
                     Refund method:{" "}

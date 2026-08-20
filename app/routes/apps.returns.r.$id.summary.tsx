@@ -386,6 +386,11 @@ export default function SummaryStep() {
             Refund method: {returnRequest.refundMethod === "STORE_CREDIT" ? "Store credit" : "Original payment method"}
           </p>
         )}
+        {returnRequest.returnContactPhone && (
+          <p style={{ color: "#6b6b6b", fontSize: 13 }}>
+            Contact phone for pickup: {returnRequest.returnContactPhone}
+          </p>
+        )}
 
         <p style={{ fontSize: 16, fontWeight: 700, marginTop: 12 }}>
           {netCents <= 0

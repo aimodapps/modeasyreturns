@@ -166,6 +166,13 @@ model ReturnRequest {
   orderName          String
   customerEmail      String?
   customerPhone      String?
+  // Collected in the wizard specifically for the return carrier (some
+  // require a phone number to schedule pickup) -- distinct from
+  // customerPhone above, which is only ever the identity-verification value
+  // typed at order lookup and may not even belong to this order's shipping
+  // address. Pushed onto the order's Shopify shipping address when the
+  // admin approves the request, not before.
+  returnContactPhone String?
   status             ReturnStatus          @default(DRAFT)
   orderSnapshot      Json
   shippingMethod     ShippingMethod?

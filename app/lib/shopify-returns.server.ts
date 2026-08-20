@@ -514,3 +514,86 @@ export async function creditStoreCredit(
   }
   return { ok: true, transactionId: transaction.id };
 }
+
+const ORDER_SHIPPING_ADDRESS_QUERY = `#graphql
+  query OrderShippingAddress($orderId: ID!) {
+    order(id: $orderId) {
+      shippingAddress {
+        address1
+        address2
+        city
+        company
+        countryCodeV2
+        firstName
+        lastName
+        phone
+        provinceCode
+        zip
+      }
+    }
+  }
+`;
+
+const ORDER_UPDATE_SHIPPING_ADDRESS_MUTATION = `#graphql
+  mutation UpdateOrderShippingAddress($input: OrderInput!) {
+    orderUpdate(input: $input) {
+      order {
+        id
+      }
+      userErrors {
+        field
+        message
+      }
+    }
+  }
+`;
+
+/**
+ * Sets the phone number on the order's existing shipping address -- some
+ * return carriers require one to schedule pickup, but it isn't collected at
+ * checkout. Fetches the current address first and resends it whole with only
+ * phone changed, rather than trusting orderUpdate to merge a partial address
+ * (that behavior isn't documented, so this never risks wiping out the real
+ * street address). No-ops when the order has no shipping address at all
+ * (e.g. a digital-only order).
+ */
+export async function updateOrderShippingPhone(
+  admin: AdminApiContext,
+  { orderId, phone }: { orderId: string; phone: string },
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const addressResponse = await admin.graphql(ORDER_SHIPPING_ADDRESS_QUERY, { variables: { orderId } });
+  const addressJson: any = await addressResponse.json();
+  const currentAddress = addressJson?.data?.order?.shippingAddress;
+  if (!currentAddress) {
+    return { ok: false, error: "This order has no shipping address to add a phone number to." };
+  }
+
+  const response = await admin.graphql(ORDER_UPDATE_SHIPPING_ADDRESS_MUTATION, {
+    variables: {
+      input: {
+        id: orderId,
+        shippingAddress: {
+          address1: currentAddress.address1,
+          address2: currentAddress.address2,
+          city: currentAddress.city,
+          company: currentAddress.company,
+          countryCode: currentAddress.countryCodeV2,
+          firstName: currentAddress.firstName,
+          lastName: currentAddress.lastName,
+          phone,
+          provinceCode: currentAddress.provinceCode,
+          zip: currentAddress.zip,
+        },
+      },
+    },
+  });
+  const json: any = await response.json();
+  const errors = json?.data?.orderUpdate?.userErrors;
+  if (errors?.length) {
+    return { ok: false, error: errors.map((e: any) => e.message).join(", ") };
+  }
+  if (!json?.data?.orderUpdate?.order) {
+    return { ok: false, error: "Shopify did not confirm the order's shipping address was updated." };
+  }
+  return { ok: true };
+}
