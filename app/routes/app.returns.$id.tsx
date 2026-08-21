@@ -390,6 +390,26 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       return { ok: true };
     }
 
+    if (intent === "waiveShippingFee") {
+      if (returnRequest.shippingFeeAmount == null || Number(returnRequest.shippingFeeAmount) <= 0) {
+        return { ok: false, error: "There's no shipping fee on this request to waive." };
+      }
+      await db.returnRequest.update({
+        where: { id: returnRequest.id },
+        data: { shippingFeeAmount: 0, shippingFeeWaived: true },
+      });
+      return { ok: true };
+    }
+
+    if (intent === "saveInternalNote") {
+      const internalNote = String(formData.get("internalNote") ?? "").trim();
+      await db.returnRequest.update({
+        where: { id: returnRequest.id },
+        data: { internalNote: internalNote || null },
+      });
+      return { ok: true };
+    }
+
     if (intent === "forceComplete") {
       if (returnRequest.status !== "APPROVED") {
         return {
@@ -584,6 +604,7 @@ export default function ReturnDetail() {
   const isSubmitting = navigation.state === "submitting";
   const [denyNote, setDenyNote] = useState("");
   const [forceCompleteNote, setForceCompleteNote] = useState("");
+  const [internalNote, setInternalNote] = useState(returnRequest.internalNote ?? "");
 
   const canDecide = returnRequest.status === "PENDING_REVIEW";
   const canMarkReceived =
@@ -592,6 +613,12 @@ export default function ReturnDetail() {
   const canSendInvoice =
     returnRequest.status === "APPROVED" &&
     returnRequest.lifecycleStage === "BALANCE_DUE";
+  const canWaiveShippingFee =
+    !returnRequest.shippingFeeWaived &&
+    Number(returnRequest.shippingFeeAmount ?? 0) > 0 &&
+    returnRequest.status !== "DENIED" &&
+    returnRequest.status !== "CANCELLED" &&
+    returnRequest.lifecycleStage !== "COMPLETED";
 
   return (
     <Page backAction={{ url: "/app/returns" }}>
@@ -648,6 +675,35 @@ export default function ReturnDetail() {
                     Shopify return: {returnRequest.shopifyReturnName}
                   </Text>
                 )}
+              </BlockStack>
+            </Card>
+
+            <Card>
+              <BlockStack gap="200">
+                <Text as="h2" variant="headingMd">
+                  Internal notes
+                </Text>
+                <Text as="p" tone="subdued">
+                  Not shown to the customer -- use this to track calls, emails, or other
+                  communication about this request (e.g. a fee waiver agreed by phone).
+                </Text>
+                <Form method="post">
+                  <input type="hidden" name="intent" value="saveInternalNote" />
+                  <BlockStack gap="200">
+                    <TextField
+                      label="Notes"
+                      labelHidden
+                      name="internalNote"
+                      value={internalNote}
+                      onChange={setInternalNote}
+                      multiline={3}
+                      autoComplete="off"
+                    />
+                    <Button submit loading={isSubmitting}>
+                      Save note
+                    </Button>
+                  </BlockStack>
+                </Form>
               </BlockStack>
             </Card>
 
@@ -773,7 +829,25 @@ export default function ReturnDetail() {
                     : "Customer's own carrier"}
                   {" — "}
                   {returnRequest.shippingFeeAmount?.toString() ?? "0.00"} fee
+                  {returnRequest.shippingFeeWaived && " (waived)"}
                 </Text>
+                {canWaiveShippingFee && (
+                  <BlockStack gap="150">
+                    {returnRequest.status === "APPROVED" && hasExchange && (
+                      <Text as="p" tone="subdued">
+                        This request includes an exchange -- its share of the fee was already
+                        recorded on the order when approved and won't be affected. Waiving now only
+                        changes what's deducted from any refund still owed.
+                      </Text>
+                    )}
+                    <Form method="post">
+                      <input type="hidden" name="intent" value="waiveShippingFee" />
+                      <Button submit loading={isSubmitting}>
+                        Waive shipping fee
+                      </Button>
+                    </Form>
+                  </BlockStack>
+                )}
                 {returnRequest.returnContactPhone && (
                   <Text as="p" tone="subdued">
                     Contact phone for pickup: {returnRequest.returnContactPhone}

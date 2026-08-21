@@ -177,6 +177,10 @@ model ReturnRequest {
   orderSnapshot      Json
   shippingMethod     ShippingMethod?
   shippingFeeAmount  Decimal?              @db.Decimal(10, 2)
+  // True once staff have waived shippingFeeAmount down to 0 as a customer
+  // service exception -- kept separate from a request that simply never had
+  // a fee, so the admin UI can say "waived" rather than showing a bare $0.
+  shippingFeeWaived  Boolean               @default(false)
   // Only meaningful for the portion of the request that gets an actual
   // cash-equivalent refund (plain-return items) -- exchanged items' value
   // is netted natively into the order balance regardless of this choice.
@@ -185,6 +189,11 @@ model ReturnRequest {
   refundMethod       RefundMethod?
   submittedAt        DateTime?
   adminNote          String?
+  // Freeform staff-only notes (e.g. "customer emailed asking about X, told
+  // them Y") -- deliberately separate from adminNote, which is sometimes
+  // shown to the customer (denial reason on the status page/email). Never
+  // surfaced anywhere in the customer-facing wizard.
+  internalNote       String?
   decidedAt          DateTime?
   decidedByStaff     String?
   shopifyReturnId    String?
