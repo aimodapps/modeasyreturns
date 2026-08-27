@@ -49,7 +49,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     // instead of anything useful. Log server-side, respond with the same
     // generic message customers get for any other lookup failure.
     console.error("[apps.returns] unhandled error", error);
-    return Response.json({ eligible: false, error: GENERIC_NOT_FOUND_MESSAGE } satisfies OrderLookupResponse);
+    return { eligible: false, error: GENERIC_NOT_FOUND_MESSAGE } satisfies OrderLookupResponse;
   }
 };
 
@@ -57,7 +57,7 @@ async function handleAction(request: Request) {
   const { admin, session } = await authenticate.public.appProxy(request);
 
   if (!admin || !session) {
-    return Response.json({ eligible: false, error: GENERIC_NOT_FOUND_MESSAGE } satisfies OrderLookupResponse);
+    return { eligible: false, error: GENERIC_NOT_FOUND_MESSAGE } satisfies OrderLookupResponse;
   }
 
   const clientIp =
@@ -68,10 +68,10 @@ async function handleAction(request: Request) {
       windowMs: 5 * 60 * 1000,
     })
   ) {
-    return Response.json({
+    return {
       eligible: false,
       error: "Too many attempts. Please wait a few minutes and try again.",
-    } satisfies OrderLookupResponse);
+    } satisfies OrderLookupResponse;
   }
 
   const formData = await request.formData();
@@ -85,7 +85,7 @@ async function handleAction(request: Request) {
   const result = await performOrderLookup(admin, session.shop, { orderNumber, email, phone });
 
   if (!result.eligible) {
-    return Response.json(result);
+    return result;
   }
 
   const draft = await createDraftReturnRequest(session.shop, {

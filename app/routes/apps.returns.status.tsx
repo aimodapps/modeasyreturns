@@ -11,10 +11,21 @@ import { getPortalBranding } from "../lib/portal-branding.server";
 import { PortalLogo } from "../components/PortalLogo";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { session } = await authenticate.public.appProxy(request);
   const url = new URL(request.url);
-  const branding = session ? await getPortalBranding(session.shop) : null;
-  return { prefillOrderNumber: url.searchParams.get("order") ?? "", branding };
+  const prefillOrderNumber = url.searchParams.get("order") ?? "";
+
+  try {
+    const { session } = await authenticate.public.appProxy(request);
+    const branding = session ? await getPortalBranding(session.shop) : null;
+    return { prefillOrderNumber, branding };
+  } catch (error) {
+    if (error instanceof Response) throw error;
+    // Same full-page server-rendered POST situation as apps.returns._index
+    // -- an unguarded throw here would crash the whole request into a raw
+    // 500 even when the action itself succeeded.
+    console.error("[apps.returns.status] loader failed", error);
+    return { prefillOrderNumber, branding: null };
+  }
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
@@ -23,19 +34,19 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   } catch (error) {
     if (error instanceof Response) return error;
     console.error("[apps.returns.status] unhandled error", error);
-    return Response.json({ error: GENERIC_NOT_FOUND_MESSAGE });
+    return { error: GENERIC_NOT_FOUND_MESSAGE };
   }
 };
 
 async function handleAction(request: Request) {
   const { admin, session } = await authenticate.public.appProxy(request);
   if (!admin || !session) {
-    return Response.json({ error: GENERIC_NOT_FOUND_MESSAGE });
+    return { error: GENERIC_NOT_FOUND_MESSAGE };
   }
 
   const clientIp = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
   if (isRateLimited(`return-status:${session.shop}:${clientIp}`, { max: 10, windowMs: 5 * 60 * 1000 })) {
-    return Response.json({ error: "Too many attempts. Please wait a few minutes and try again." });
+    return { error: "Too many attempts. Please wait a few minutes and try again." };
   }
 
   const formData = await request.formData();
@@ -46,12 +57,12 @@ async function handleAction(request: Request) {
   const phone = isEmail ? undefined : contact;
 
   if (!orderNumber.trim() || !contact.trim()) {
-    return Response.json({ error: "Please provide your order number and either an email or phone number." });
+    return { error: "Please provide your order number and either an email or phone number." };
   }
 
   const order = await findOrderForReturnLookup(admin, { orderNumber, email, phone });
   if (!order) {
-    return Response.json({ error: GENERIC_NOT_FOUND_MESSAGE });
+    return { error: GENERIC_NOT_FOUND_MESSAGE };
   }
 
   const existing = await db.returnRequest.findFirst({
@@ -60,9 +71,7 @@ async function handleAction(request: Request) {
   });
 
   if (!existing) {
-    return Response.json({
-      error: "We couldn't find a submitted return or exchange request for this order.",
-    });
+    return { error: "We couldn't find a submitted return or exchange request for this order." };
   }
 
   return redirect(`/apps/returns/r/${existing.id}/summary`);
