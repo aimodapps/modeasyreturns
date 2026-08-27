@@ -397,9 +397,17 @@ export async function createShopifyRefund(
       input: {
         orderId,
         notify: true,
+        // NO_RESTOCK -- the physical item was already restocked moments
+        // earlier via processShopifyReturn's RESTOCKED disposition on the
+        // Return itself. Restocking again here would double-count
+        // inventory, and Shopify's default restockType (effectively CANCEL,
+        // meant for unfulfilled items) rejects an already-fulfilled,
+        // already-returned line item with a misleading "cannot refund more
+        // items than were purchased" error.
         refundLineItems: lineItems.map((li) => ({
           lineItemId: li.shopifyLineItemId,
           quantity: li.quantity,
+          restockType: "NO_RESTOCK",
         })),
         transactions: [
           {
@@ -416,7 +424,13 @@ export async function createShopifyRefund(
   const json: any = await response.json();
   const errors = json?.data?.refundCreate?.userErrors;
   if (errors?.length) {
-    return { ok: false, error: errors.map((e: any) => e.message).join(", ") };
+    console.error("[shopify-returns] refundCreate userErrors", JSON.stringify(errors));
+    return {
+      ok: false,
+      error: errors
+        .map((e: any) => (e.field?.length ? `${e.message} (${e.field.join(".")})` : e.message))
+        .join(", "),
+    };
   }
   const refund = json?.data?.refundCreate?.refund;
   if (!refund) {

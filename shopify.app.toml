@@ -21,7 +21,7 @@ api_version = "2026-04"
 
 [access_scopes]
 # Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
-scopes = "read_orders,read_products,read_files,write_files,write_returns,write_orders,write_draft_orders,write_store_credit_account_transactions,read_merchant_managed_fulfillment_orders"
+scopes = "read_orders,read_products,read_files,write_files,write_returns,write_orders,write_draft_orders,write_store_credit_account_transactions,read_merchant_managed_fulfillment_orders,read_locations"
 
 [auth]
 redirect_urls = [ "https://mod-easy-returns.onrender.com/api/auth" ]

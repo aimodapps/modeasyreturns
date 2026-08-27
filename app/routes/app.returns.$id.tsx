@@ -226,9 +226,16 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         };
       }
 
-      const processResult = await processShopifyReturn(admin, {
-        returnId: returnRequest.shopifyReturnId,
-      });
+      // Skip re-processing the Shopify Return on a retry -- if a prior
+      // attempt got this far (receivedAt set below) but failed at the
+      // refund step, the return was already restocked and the exchange
+      // hold already released; calling processShopifyReturn again would
+      // hit an already-processed Return and risks double-restocking.
+      const processResult = returnRequest.receivedAt
+        ? { ok: true as const }
+        : await processShopifyReturn(admin, {
+            returnId: returnRequest.shopifyReturnId,
+          });
       if (!processResult.ok) {
         return {
           ok: false,

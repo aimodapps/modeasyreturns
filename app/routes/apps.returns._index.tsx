@@ -14,13 +14,28 @@ import { getPortalBranding } from "../lib/portal-branding.server";
 import { PortalLogo } from "../components/PortalLogo";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { session } = await authenticate.public.appProxy(request);
   const url = new URL(request.url);
-  const branding = session ? await getPortalBranding(session.shop) : null;
   // Lets a deep link (e.g. from a customer account order page) prefill the
   // order number -- the customer still has to enter a matching email/phone
   // themselves, so this doesn't weaken identity verification at all.
-  return { prefillOrderNumber: url.searchParams.get("order") ?? "", branding };
+  const prefillOrderNumber = url.searchParams.get("order") ?? "";
+
+  try {
+    const { session } = await authenticate.public.appProxy(request);
+    const branding = session ? await getPortalBranding(session.shop) : null;
+    return { prefillOrderNumber, branding };
+  } catch (error) {
+    if (error instanceof Response) throw error;
+    // This route is a full-page server-rendered POST (no client JS
+    // hydration through the App Proxy -- see the action below), so on a
+    // POST navigation Remix runs this loader in the SAME request/response
+    // cycle right after the action to build the rendered page. An unguarded
+    // throw here would crash that whole cycle into a raw 500 even when the
+    // action itself succeeded -- degrade to default branding instead so a
+    // transient branding-lookup hiccup never takes down order lookup itself.
+    console.error("[apps.returns] loader failed", error);
+    return { prefillOrderNumber, branding: null };
+  }
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
