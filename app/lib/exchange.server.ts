@@ -21,3 +21,37 @@ export function calculatePriceDifference(
 
   return { direction, amount };
 }
+
+/** Total value of the replacement item(s) being sent out, in cents-safe terms. */
+export function sumExchangeSubtotal(
+  selections: Array<{ targetUnitPrice: string | number; quantity: number }>,
+): string {
+  const cents = selections.reduce((sum, s) => sum + Math.round(Number(s.targetUnitPrice) * CENTS) * s.quantity, 0);
+  return (cents / CENTS).toFixed(2);
+}
+
+/**
+ * Shipping on an exchange's replacement shipment. Mirrors a storefront
+ * free-shipping minimum: replacement items worth at least the threshold ship
+ * free, anything less pays the flat fee. A missing threshold means never free.
+ * No exchange (subtotal 0) or an inactive config means no charge.
+ */
+export function calculateExchangeShippingFee({
+  subtotal,
+  feeAmount,
+  freeShippingThreshold,
+  isActive,
+}: {
+  subtotal: string | number;
+  feeAmount: string | number;
+  freeShippingThreshold: string | number | null;
+  isActive: boolean;
+}): { amount: string; freeShippingApplied: boolean } {
+  const subtotalCents = Math.round(Number(subtotal) * CENTS);
+  if (!isActive || subtotalCents <= 0) return { amount: "0.00", freeShippingApplied: false };
+
+  if (freeShippingThreshold != null && subtotalCents >= Math.round(Number(freeShippingThreshold) * CENTS)) {
+    return { amount: "0.00", freeShippingApplied: true };
+  }
+  return { amount: (Math.round(Number(feeAmount) * CENTS) / CENTS).toFixed(2), freeShippingApplied: false };
+}

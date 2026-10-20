@@ -181,6 +181,14 @@ model ReturnRequest {
   // service exception -- kept separate from a request that simply never had
   // a fee, so the admin UI can say "waived" rather than showing a bare $0.
   shippingFeeWaived  Boolean               @default(false)
+  // Shipping charged for the replacement item(s) of an exchange (the
+  // customer's original free-shipping qualification doesn't carry over to a
+  // new shipment). Snapshotted at submission from ExchangeShippingFeeConfig;
+  // null when there's no exchange or the fee isn't configured. Kept apart
+  // from shippingFeeAmount (return-label/restocking fee) so each can be
+  // waived on its own, but both are summed wherever the fee is applied.
+  exchangeShippingFeeAmount Decimal?       @db.Decimal(10, 2)
+  exchangeShippingFeeWaived Boolean        @default(false)
   // Only meaningful for the portion of the request that gets an actual
   // cash-equivalent refund (plain-return items) -- exchanged items' value
   // is netted natively into the order balance regardless of this choice.
@@ -356,6 +364,20 @@ model RestockingFeeConfig {
   shopDomain String   @unique
   feeType    FeeType  @default(PERCENTAGE)
   value      Decimal  @db.Decimal(10, 2)
+  isActive   Boolean  @default(true)
+  updatedAt  DateTime @updatedAt
+}
+
+// Shipping charged on an exchange's replacement item(s). The shop's normal
+// free-shipping threshold doesn't apply automatically -- an exchange is a new
+// shipment created outside checkout -- so it's mirrored here. Without a saved
+// row (or with isActive off) exchanges ship free, same as before this existed.
+model ExchangeShippingFeeConfig {
+  id         String   @id @default(cuid())
+  shopDomain String   @unique
+  feeAmount  Decimal  @db.Decimal(10, 2) @default(6.95)
+  // Replacement items worth at least this much ship free. Null = never free.
+  freeShippingThreshold Decimal? @db.Decimal(10, 2)
   isActive   Boolean  @default(true)
   updatedAt  DateTime @updatedAt
 }

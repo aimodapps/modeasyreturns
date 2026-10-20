@@ -6,9 +6,20 @@ import db from "../db.server";
 import { computeReturnRefundBreakdown } from "../lib/return-refund.server";
 import { sendReturnInitiatedEmail } from "../lib/email.server";
 import { getExchangeFulfillmentStatus } from "../lib/shopify-returns.server";
+import { quoteExchangeShippingFee } from "../lib/fees.server";
 import { portalStyles as styles, PORTAL_ANIMATION_CSS } from "../lib/portal-styles";
 import { getPortalBranding, type PortalBranding } from "../lib/portal-branding.server";
 import { PortalLogo } from "../components/PortalLogo";
+
+function exchangeSelectionsFor(returnRequest: {
+  lineItems: Array<{ quantity: number; exchangeSelection: { targetUnitPrice: { toString(): string } } | null }>;
+}) {
+  return returnRequest.lineItems.flatMap((li) =>
+    li.exchangeSelection
+      ? [{ targetUnitPrice: li.exchangeSelection.targetUnitPrice.toString(), quantity: li.quantity }]
+      : [],
+  );
+}
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.public.appProxy(request);
@@ -63,9 +74,16 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     }
   }
 
+  // Drafts quote live; once submitted the amount is frozen on the request
+  // (and may have been waived by staff), so it's read back, not re-quoted.
+  const exchangeShippingFeeAmount =
+    returnRequest.status === "DRAFT"
+      ? (await quoteExchangeShippingFee(session.shop, exchangeSelectionsFor(returnRequest))).amount
+      : (returnRequest.exchangeShippingFeeAmount?.toString() ?? "0.00");
+
   const branding = await getPortalBranding(session.shop);
 
-  return { returnRequest, refundBreakdown, exchangeFulfillmentStatus, branding };
+  return { returnRequest, refundBreakdown, exchangeFulfillmentStatus, exchangeShippingFeeAmount, branding };
 };
 
 export const action = async ({ request, params }: ActionFunctionArgs) => {
@@ -74,14 +92,21 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 
   const returnRequest = await db.returnRequest.findFirst({
     where: { id: params.id!, shopDomain: session.shop },
-    include: { lineItems: true },
+    include: { lineItems: { include: { exchangeSelection: true } } },
   });
   if (!returnRequest) throw new Response("Not found", { status: 404 });
 
   if (returnRequest.status === "DRAFT") {
+    const exchangeShipping = await quoteExchangeShippingFee(session.shop, exchangeSelectionsFor(returnRequest));
     await db.returnRequest.update({
       where: { id: returnRequest.id },
-      data: { status: "PENDING_REVIEW", submittedAt: new Date() },
+      data: {
+        status: "PENDING_REVIEW",
+        submittedAt: new Date(),
+        // Null (not "0.00") when nothing applies, so "no exchange" and
+        // "exchange that shipped free" don't need to be told apart later.
+        exchangeShippingFeeAmount: Number(exchangeShipping.amount) > 0 ? exchangeShipping.amount : null,
+      },
     });
 
     const shopSettings = await db.shopSettings.findUnique({ where: { shopDomain: session.shop } });
@@ -117,6 +142,7 @@ function computeNet(
     shippingFeeAmount: unknown;
   },
   refundBreakdown: Record<string, { recalculatedRefund: number }>,
+  exchangeShippingFeeAmount: string,
 ) {
   let netCents = 0;
   for (const item of returnRequest.lineItems) {
@@ -136,6 +162,7 @@ function computeNet(
     // worse -- less refund back, or more to pay on an exchange upcharge.
     netCents += Math.round(Number(returnRequest.shippingFeeAmount) * 100);
   }
+  netCents += Math.round(Number(exchangeShippingFeeAmount) * 100);
   return netCents;
 }
 
@@ -304,7 +331,8 @@ function StatusScreen({
 }
 
 export default function SummaryStep() {
-  const { returnRequest, refundBreakdown, exchangeFulfillmentStatus, branding } = useLoaderData<typeof loader>();
+  const { returnRequest, refundBreakdown, exchangeFulfillmentStatus, exchangeShippingFeeAmount, branding } =
+    useLoaderData<typeof loader>();
   const navigation = useNavigation();
   const isSubmitting = navigation.state === "submitting";
 
@@ -320,7 +348,7 @@ export default function SummaryStep() {
     );
   }
 
-  const netCents = computeNet(returnRequest, refundBreakdown);
+  const netCents = computeNet(returnRequest, refundBreakdown, exchangeShippingFeeAmount);
   const netAmount = (Math.abs(netCents) / 100).toFixed(2);
   const currency = returnRequest.lineItems[0]?.currencyCode ?? "";
 
@@ -378,6 +406,11 @@ export default function SummaryStep() {
           Shipping: {returnRequest.shippingMethod === "RETURN_LABEL" ? "Return label" : "Own carrier"} (
           {returnRequest.shippingFeeAmount?.toString() ?? "0.00"} {currency} fee)
         </p>
+        {Number(exchangeShippingFeeAmount) > 0 && (
+          <p style={{ color: "#6b6b6b", fontSize: 13 }}>
+            Exchange shipping: {exchangeShippingFeeAmount} {currency}
+          </p>
+        )}
         <p style={{ color: "#6b6b6b", fontSize: 13 }}>
           ✓ {returnRequest.photos.length} photo{returnRequest.photos.length === 1 ? "" : "s"} received
         </p>

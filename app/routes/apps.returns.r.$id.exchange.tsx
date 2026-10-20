@@ -10,6 +10,7 @@ import {
   getVariantById,
 } from "../lib/shopify-catalog.server";
 import { calculatePriceDifference } from "../lib/exchange.server";
+import { quoteExchangeShippingFee } from "../lib/fees.server";
 import { portalStyles as styles, PORTAL_ANIMATION_CSS } from "../lib/portal-styles";
 import { getPortalBranding } from "../lib/portal-branding.server";
 import { PortalLogo } from "../components/PortalLogo";
@@ -53,7 +54,24 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     upsellPicks.map((p) => p.shopifyProductId),
   );
 
-  return { returnRequest, upsellProducts, exchangeSelections, searchItemId, searchTerm, searchResults, branding };
+  const exchangeShipping = await quoteExchangeShippingFee(
+    session.shop,
+    exchangeSelections.map((s) => ({
+      targetUnitPrice: s.targetUnitPrice.toString(),
+      quantity: returnRequest.lineItems.find((li) => li.id === s.returnRequestLineItemId)?.quantity ?? 1,
+    })),
+  );
+
+  return {
+    returnRequest,
+    upsellProducts,
+    exchangeSelections,
+    searchItemId,
+    searchTerm,
+    searchResults,
+    branding,
+    exchangeShipping,
+  };
 };
 
 export const action = async ({ request, params }: ActionFunctionArgs) => {
@@ -125,8 +143,17 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 };
 
 export default function ExchangeStep() {
-  const { returnRequest, upsellProducts, exchangeSelections, searchItemId, searchTerm, searchResults, branding } =
-    useLoaderData<typeof loader>();
+  const {
+    returnRequest,
+    upsellProducts,
+    exchangeSelections,
+    searchItemId,
+    searchTerm,
+    searchResults,
+    branding,
+    exchangeShipping,
+  } = useLoaderData<typeof loader>();
+  const currency = returnRequest.lineItems[0]?.currencyCode ?? "";
   const navigation = useNavigation();
   const isSubmitting = navigation.state === "submitting";
   const baseAction = `/apps/returns/r/${returnRequest.id}/exchange`;
@@ -141,6 +168,12 @@ export default function ExchangeStep() {
         <p style={styles.subheading}>
           Pick a replacement for any item below, or just continue for a refund. We'll handle any
           price difference.
+          {exchangeShipping.feeAmount != null &&
+            ` Shipping for replacement items is ${exchangeShipping.feeAmount} ${currency}${
+              exchangeShipping.freeShippingThreshold != null
+                ? `, or free when they total ${exchangeShipping.freeShippingThreshold} ${currency} or more`
+                : ""
+            }.`}
         </p>
 
         <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
@@ -276,6 +309,15 @@ export default function ExchangeStep() {
             );
           })}
         </div>
+
+        {exchangeSelections.length > 0 && exchangeShipping.feeAmount != null && (
+          <p style={{ fontSize: 14, marginTop: 20, marginBottom: 0 }}>
+            Replacement items total {exchangeShipping.subtotal} {currency} --{" "}
+            {exchangeShipping.freeShippingApplied
+              ? "free shipping applies."
+              : `shipping: ${exchangeShipping.amount} ${currency}.`}
+          </p>
+        )}
 
         <Form method="post" action={baseAction} style={{ marginTop: 20 }}>
           <input type="hidden" name="intent" value="continue" />

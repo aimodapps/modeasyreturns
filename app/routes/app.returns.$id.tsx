@@ -152,10 +152,12 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
           quantity: li.quantity,
         }));
 
+      // Return shipping/restocking fee plus exchange replacement shipping --
+      // both are recorded as the Return's fee so Shopify nets them into the
+      // order balance the same way.
       const feeAmount =
-        returnRequest.shippingFeeAmount != null
-          ? Number(returnRequest.shippingFeeAmount)
-          : 0;
+        Number(returnRequest.shippingFeeAmount ?? 0) +
+        Number(returnRequest.exchangeShippingFeeAmount ?? 0);
 
       const returnResult = await createShopifyReturn(admin, {
         orderId: returnRequest.orderId,
@@ -269,10 +271,11 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         });
       }
 
-      const feeCents =
-        returnRequest.shippingFeeAmount != null
-          ? Math.round(Number(returnRequest.shippingFeeAmount) * 100)
-          : 0;
+      const feeCents = Math.round(
+        (Number(returnRequest.shippingFeeAmount ?? 0) +
+          Number(returnRequest.exchangeShippingFeeAmount ?? 0)) *
+          100,
+      );
       // The fee only comes out of a refund we're actually issuing -- an
       // exchange-only fee is expected to already be netted by Shopify via the
       // returnShippingFee we set at approval time.
@@ -404,6 +407,20 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       await db.returnRequest.update({
         where: { id: returnRequest.id },
         data: { shippingFeeAmount: 0, shippingFeeWaived: true },
+      });
+      return { ok: true };
+    }
+
+    if (intent === "waiveExchangeShippingFee") {
+      if (
+        returnRequest.exchangeShippingFeeAmount == null ||
+        Number(returnRequest.exchangeShippingFeeAmount) <= 0
+      ) {
+        return { ok: false, error: "There's no exchange shipping fee on this request to waive." };
+      }
+      await db.returnRequest.update({
+        where: { id: returnRequest.id },
+        data: { exchangeShippingFeeAmount: 0, exchangeShippingFeeWaived: true },
       });
       return { ok: true };
     }
@@ -623,6 +640,13 @@ export default function ReturnDetail() {
   const canWaiveShippingFee =
     !returnRequest.shippingFeeWaived &&
     Number(returnRequest.shippingFeeAmount ?? 0) > 0 &&
+    returnRequest.status !== "DENIED" &&
+    returnRequest.status !== "CANCELLED" &&
+    returnRequest.lifecycleStage !== "COMPLETED";
+
+  const canWaiveExchangeShippingFee =
+    !returnRequest.exchangeShippingFeeWaived &&
+    Number(returnRequest.exchangeShippingFeeAmount ?? 0) > 0 &&
     returnRequest.status !== "DENIED" &&
     returnRequest.status !== "CANCELLED" &&
     returnRequest.lifecycleStage !== "COMPLETED";
@@ -851,6 +875,30 @@ export default function ReturnDetail() {
                       <input type="hidden" name="intent" value="waiveShippingFee" />
                       <Button submit loading={isSubmitting}>
                         Waive shipping fee
+                      </Button>
+                    </Form>
+                  </BlockStack>
+                )}
+                {(returnRequest.exchangeShippingFeeAmount != null ||
+                  returnRequest.exchangeShippingFeeWaived) && (
+                  <Text as="p">
+                    Exchange shipping (replacement items):{" "}
+                    {returnRequest.exchangeShippingFeeAmount?.toString() ?? "0.00"}
+                    {returnRequest.exchangeShippingFeeWaived && " (waived)"}
+                  </Text>
+                )}
+                {canWaiveExchangeShippingFee && (
+                  <BlockStack gap="150">
+                    {returnRequest.status === "APPROVED" && (
+                      <Text as="p" tone="subdued">
+                        This was already recorded on the order when approved and won't change there.
+                        Waiving now only changes what's deducted from any refund still owed.
+                      </Text>
+                    )}
+                    <Form method="post">
+                      <input type="hidden" name="intent" value="waiveExchangeShippingFee" />
+                      <Button submit loading={isSubmitting}>
+                        Waive exchange shipping
                       </Button>
                     </Form>
                   </BlockStack>

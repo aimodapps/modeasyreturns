@@ -1,4 +1,5 @@
 import db from "../db.server";
+import { sumExchangeSubtotal, calculateExchangeShippingFee } from "./exchange.server";
 
 export type ShippingFeeQuote = {
   restockingFeeAmount: string;
@@ -47,5 +48,44 @@ export async function quoteShippingFees(
     labelFeeAmount: labelFeeAmount.toFixed(2),
     labelFeePerItem: labelFeePerItem.toFixed(2),
     labelFeeAvailable: labelFeeActive,
+  };
+}
+
+export type ExchangeShippingQuote = {
+  amount: string;
+  subtotal: string;
+  freeShippingApplied: boolean;
+  /** Config the quote was made against, so the UI can explain the rule ("free at $65+"). */
+  feeAmount: string | null;
+  freeShippingThreshold: string | null;
+};
+
+/**
+ * Shipping for the replacement item(s) of an exchange. Without a saved,
+ * active ExchangeShippingFeeConfig this quotes $0, so exchanges keep shipping
+ * free until the merchant opts in under Shipping & fees.
+ */
+export async function quoteExchangeShippingFee(
+  shopDomain: string,
+  selections: Array<{ targetUnitPrice: string | number; quantity: number }>,
+): Promise<ExchangeShippingQuote> {
+  const subtotal = sumExchangeSubtotal(selections);
+  const config = await db.exchangeShippingFeeConfig.findUnique({ where: { shopDomain } });
+  if (!config) {
+    return { amount: "0.00", subtotal, freeShippingApplied: false, feeAmount: null, freeShippingThreshold: null };
+  }
+
+  const { amount, freeShippingApplied } = calculateExchangeShippingFee({
+    subtotal,
+    feeAmount: config.feeAmount.toString(),
+    freeShippingThreshold: config.freeShippingThreshold?.toString() ?? null,
+    isActive: config.isActive,
+  });
+  return {
+    amount,
+    subtotal,
+    freeShippingApplied,
+    feeAmount: config.isActive ? config.feeAmount.toString() : null,
+    freeShippingThreshold: config.isActive ? (config.freeShippingThreshold?.toString() ?? null) : null,
   };
 }
