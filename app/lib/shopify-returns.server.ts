@@ -92,7 +92,20 @@ export async function createShopifyReturn(
   const json: any = await response.json();
   const errors = json?.data?.returnCreate?.userErrors;
   if (errors?.length) {
-    return { ok: false, error: errors.map((e: any) => e.message).join(", ") };
+    const message = errors
+      .map((e: any) => (e.field?.length ? `${e.message} (${e.field.join(".")})` : e.message))
+      .join(", ");
+    // Shopify reports this when the requested quantity exceeds what's still
+    // returnable -- in practice because a return (or refund) was already
+    // created for these items directly on the order, outside this app. Say so,
+    // since the raw message gives staff no hint what to do next.
+    if (errors.some((e: any) => /invalid quantity/i.test(e.message))) {
+      return {
+        ok: false,
+        error: `${message}. Shopify won't create another return for these items -- usually because a return or refund was already created for them directly on the order. Check the order's Returns in Shopify; if it's already handled there, delete this request instead.`,
+      };
+    }
+    return { ok: false, error: message };
   }
   const created = json?.data?.returnCreate?.return;
   if (!created) {

@@ -1,8 +1,10 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
+import { redirect } from "@remix-run/node";
 import {
   useLoaderData,
   useActionData,
   useNavigation,
+  useSubmit,
   Form,
 } from "@remix-run/react";
 import {
@@ -16,6 +18,7 @@ import {
   Button,
   TextField,
   Banner,
+  Modal,
   Thumbnail,
   Link as PolarisLink,
 } from "@shopify/polaris";
@@ -425,6 +428,14 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       return { ok: true };
     }
 
+    if (intent === "deleteRequest") {
+      // Only removes this app's record (line items, photo links and email
+      // log cascade with it). Any Shopify return already created for it,
+      // and the uploaded photo files, are left untouched.
+      await db.returnRequest.delete({ where: { id: returnRequest.id } });
+      return redirect("/app/returns");
+    }
+
     if (intent === "saveInternalNote") {
       const internalNote = String(formData.get("internalNote") ?? "").trim();
       await db.returnRequest.update({
@@ -629,6 +640,8 @@ export default function ReturnDetail() {
   const [denyNote, setDenyNote] = useState("");
   const [forceCompleteNote, setForceCompleteNote] = useState("");
   const [internalNote, setInternalNote] = useState(returnRequest.internalNote ?? "");
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const submit = useSubmit();
 
   const canDecide = returnRequest.status === "PENDING_REVIEW";
   const canMarkReceived =
@@ -1036,9 +1049,54 @@ export default function ReturnDetail() {
                   </BlockStack>
                 </Card>
               )}
+
+            <Card>
+              <BlockStack gap="300">
+                <Text as="h2" variant="headingMd">
+                  Delete request
+                </Text>
+                <Text as="p" tone="subdued">
+                  Removes this request from the app, for example a duplicate, or one already
+                  handled directly in Shopify.
+                </Text>
+                <InlineStack>
+                  <Button tone="critical" onClick={() => setDeleteOpen(true)}>
+                    Delete request
+                  </Button>
+                </InlineStack>
+              </BlockStack>
+            </Card>
           </BlockStack>
         </Layout.Section>
       </Layout>
+
+      <Modal
+        open={deleteOpen}
+        onClose={() => setDeleteOpen(false)}
+        title={`Delete the request for ${returnRequest.orderName}?`}
+        primaryAction={{
+          content: "Delete request",
+          destructive: true,
+          loading: isSubmitting,
+          onAction: () => submit({ intent: "deleteRequest" }, { method: "post" }),
+        }}
+        secondaryActions={[{ content: "Cancel", onAction: () => setDeleteOpen(false) }]}
+      >
+        <Modal.Section>
+          <BlockStack gap="200">
+            <Text as="p">
+              This permanently removes the request, its photo links and its notes from this app. It
+              can't be undone.
+            </Text>
+            {returnRequest.shopifyReturnName && (
+              <Text as="p" tone="caution">
+                It's linked to Shopify return {returnRequest.shopifyReturnName}. That return is not
+                changed or cancelled -- only this app's record is deleted.
+              </Text>
+            )}
+          </BlockStack>
+        </Modal.Section>
+      </Modal>
     </Page>
   );
 }
