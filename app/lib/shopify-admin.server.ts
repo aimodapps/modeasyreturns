@@ -92,12 +92,38 @@ const ORDER_SEARCH_QUERY = `#graphql
                 amount
               }
             }
+            discountedUnitPriceAfterAllDiscountsSet {
+              shopMoney {
+                amount
+              }
+            }
           }
         }
       }
     }
   }
 `;
+
+/**
+ * What the customer actually paid per unit. discountedUnitPriceSet alone is
+ * NOT that: Shopify documents it as excluding order-level and discount-code
+ * discounts, so for an order that used a code it still shows (near) the full
+ * price -- which both displayed the wrong subtotal and, worse, made the
+ * discount engine see "no discount" and refund the full price.
+ * discountedUnitPriceAfterAllDiscountsSet includes those. It's documented as
+ * approximate (and has been seen a cent off), so never let it exceed the
+ * line-level price, and fall back to that price if it's missing.
+ */
+export function paidUnitPrice(lineItem: {
+  discountedUnitPriceSet?: { shopMoney?: { amount?: string } } | null;
+  discountedUnitPriceAfterAllDiscountsSet?: { shopMoney?: { amount?: string } } | null;
+}): string {
+  const lineLevel = lineItem.discountedUnitPriceSet?.shopMoney?.amount;
+  const afterAll = lineItem.discountedUnitPriceAfterAllDiscountsSet?.shopMoney?.amount;
+  if (afterAll == null) return lineLevel ?? "0.00";
+  if (lineLevel == null) return afterAll;
+  return Number(afterAll) <= Number(lineLevel) ? afterAll : lineLevel;
+}
 
 const RETURNABLE_FULFILLMENTS_QUERY = `#graphql
   query ReturnableFulfillmentsForOrder($orderId: ID!) {
@@ -116,6 +142,11 @@ const RETURNABLE_FULFILLMENTS_QUERY = `#graphql
                   shopMoney {
                     amount
                     currencyCode
+                  }
+                }
+                discountedUnitPriceAfterAllDiscountsSet {
+                  shopMoney {
+                    amount
                   }
                 }
                 image {
@@ -222,7 +253,7 @@ export async function findOrderForReturnLookup(
     productId: node.product?.id ?? null,
     quantity: node.quantity,
     originalUnitPrice: node.originalUnitPriceSet?.shopMoney?.amount ?? "0.00",
-    discountedUnitPrice: node.discountedUnitPriceSet?.shopMoney?.amount ?? "0.00",
+    discountedUnitPrice: paidUnitPrice(node),
   }));
 
   return {
@@ -269,7 +300,7 @@ async function getReturnableItems(
         title: lineItem.title,
         variantTitle: lineItem.variantTitle ?? null,
         quantity: node.quantity,
-        unitPrice: lineItem.discountedUnitPriceSet?.shopMoney?.amount ?? "0.00",
+        unitPrice: paidUnitPrice(lineItem),
         currencyCode: lineItem.discountedUnitPriceSet?.shopMoney?.currencyCode ?? "USD",
         imageUrl: lineItem.image?.url ?? null,
         productId: lineItem.product?.id ?? null,
