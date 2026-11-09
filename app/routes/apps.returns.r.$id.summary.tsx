@@ -7,6 +7,7 @@ import { computeReturnRefundBreakdown } from "../lib/return-refund.server";
 import { sendReturnInitiatedEmail } from "../lib/email.server";
 import { getExchangeFulfillmentStatus } from "../lib/shopify-returns.server";
 import { quoteExchangeShippingFee } from "../lib/fees.server";
+import { areExchangesEnabled, clearExchangeSelections } from "../lib/wizard.server";
 import { portalStyles as styles, PORTAL_ANIMATION_CSS } from "../lib/portal-styles";
 import { getPortalBranding, type PortalBranding } from "../lib/portal-branding.server";
 import { PortalLogo } from "../components/PortalLogo";
@@ -33,6 +34,12 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     },
   });
   if (!returnRequest) throw new Response("Not found", { status: 404 });
+
+  if (returnRequest.status === "DRAFT" && !(await areExchangesEnabled(session.shop))) {
+    // A draft started before exchanges were turned off can't carry one through.
+    await clearExchangeSelections(returnRequest.lineItems.map((li) => li.id));
+    for (const li of returnRequest.lineItems) li.exchangeSelection = null;
+  }
 
   if (returnRequest.status === "DRAFT") {
     if (returnRequest.lineItems.length === 0) {
@@ -97,6 +104,10 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
   if (!returnRequest) throw new Response("Not found", { status: 404 });
 
   if (returnRequest.status === "DRAFT") {
+    if (!(await areExchangesEnabled(session.shop))) {
+      await clearExchangeSelections(returnRequest.lineItems.map((li) => li.id));
+      for (const li of returnRequest.lineItems) li.exchangeSelection = null;
+    }
     const exchangeShipping = await quoteExchangeShippingFee(session.shop, exchangeSelectionsFor(returnRequest));
     await db.returnRequest.update({
       where: { id: returnRequest.id },
@@ -167,7 +178,7 @@ function computeNet(
 }
 
 const CUSTOMER_STAGE_STEPS = [
-  { key: "ACCEPTED", label: "Return/Exchange Accepted" },
+  { key: "ACCEPTED", label: "Return Accepted" },
   { key: "AWAITING_RECEIPT", label: "Waiting for return to be received and inspected" },
   { key: "INVOICE_SENT", label: "Invoice sent (Awaiting Payment)" },
   { key: "COMPLETED", label: "Completed" },
@@ -251,7 +262,9 @@ function StatusScreen({
     returnRequest.balanceDueAmount != null ||
     returnRequest.lifecycleStage === "BALANCE_DUE" ||
     returnRequest.lifecycleStage === "INVOICE_SENT";
-  const steps = CUSTOMER_STAGE_STEPS.filter((s) => s.key !== "INVOICE_SENT" || showInvoiceStep);
+  const steps = CUSTOMER_STAGE_STEPS.filter((s) => s.key !== "INVOICE_SENT" || showInvoiceStep).map((s) =>
+    s.key === "ACCEPTED" && hasExchange ? { ...s, label: "Return/Exchange Accepted" } : s,
+  );
   const order = ["AWAITING_RECEIPT", "BALANCE_DUE", "INVOICE_SENT", "COMPLETED"];
   const currentIndex = returnRequest.lifecycleStage ? order.indexOf(returnRequest.lifecycleStage) : -1;
 

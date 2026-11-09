@@ -8,6 +8,7 @@ import { findOrderForReturnLookup } from "../lib/shopify-admin.server";
 import { GENERIC_NOT_FOUND_MESSAGE } from "../lib/order-lookup.server";
 import { portalStyles as styles, PORTAL_ANIMATION_CSS } from "../lib/portal-styles";
 import { getPortalBranding } from "../lib/portal-branding.server";
+import { areExchangesEnabled } from "../lib/wizard.server";
 import { PortalLogo } from "../components/PortalLogo";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -16,15 +17,17 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   try {
     const { session } = await authenticate.public.appProxy(request);
-    const branding = session ? await getPortalBranding(session.shop) : null;
-    return { prefillOrderNumber, branding };
+    const [branding, exchangesEnabled] = session
+      ? await Promise.all([getPortalBranding(session.shop), areExchangesEnabled(session.shop)])
+      : [null, false];
+    return { prefillOrderNumber, branding, exchangesEnabled };
   } catch (error) {
     if (error instanceof Response) throw error;
     // Same full-page server-rendered POST situation as apps.returns._index
     // -- an unguarded throw here would crash the whole request into a raw
     // 500 even when the action itself succeeded.
     console.error("[apps.returns.status] loader failed", error);
-    return { prefillOrderNumber, branding: null };
+    return { prefillOrderNumber, branding: null, exchangesEnabled: false };
   }
 };
 
@@ -71,14 +74,15 @@ async function handleAction(request: Request) {
   });
 
   if (!existing) {
-    return { error: "We couldn't find a submitted return or exchange request for this order." };
+    const word = (await areExchangesEnabled(session.shop)) ? "return or exchange" : "return";
+    return { error: `We couldn't find a submitted ${word} request for this order.` };
   }
 
   return redirect(`/apps/returns/r/${existing.id}/summary`);
 }
 
 export default function ReturnStatusLookup() {
-  const { prefillOrderNumber, branding } = useLoaderData<typeof loader>();
+  const { prefillOrderNumber, branding, exchangesEnabled } = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   const navigation = useNavigation();
   const isSubmitting = navigation.state === "submitting";
@@ -91,7 +95,7 @@ export default function ReturnStatusLookup() {
         <h1 style={styles.heading}>Check your return status</h1>
         <p style={styles.subheading}>
           Enter your order number and the email or phone number used at checkout to see the latest status of your
-          return or exchange.
+          {exchangesEnabled ? "return or exchange" : "return"}.
         </p>
 
         <Form method="post" action="/apps/returns/status" style={styles.form}>

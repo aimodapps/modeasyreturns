@@ -3,7 +3,7 @@ import { redirect } from "@remix-run/node";
 import { Form, useLoaderData, useNavigation } from "@remix-run/react";
 import { authenticate } from "../shopify.server";
 import db from "../db.server";
-import { loadReturnRequestOrThrow } from "../lib/wizard.server";
+import { areExchangesEnabled, clearExchangeSelections, loadReturnRequestOrThrow } from "../lib/wizard.server";
 import {
   searchCatalogProducts,
   getCatalogProductsByIds,
@@ -31,6 +31,12 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   }
   if (returnRequest.lineItems.some((li) => !li.reasonId)) {
     throw redirect(`/apps/returns/r/${returnRequest.id}/reason`);
+  }
+
+  if (!(await areExchangesEnabled(session.shop))) {
+    // Exchanges are off: drop any choice made before they were turned off and move on.
+    await clearExchangeSelections(returnRequest.lineItems.map((li) => li.id));
+    throw redirect(`/apps/returns/r/${returnRequest.id}/shipping`);
   }
 
   const url = new URL(request.url);
@@ -78,6 +84,13 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
   const { admin, session } = await authenticate.public.appProxy(request);
   if (!admin || !session) throw new Response("Not found", { status: 404 });
   const returnRequest = await loadReturnRequestOrThrow(params.id!, session.shop);
+
+  // Enforced here too, not just by hiding the step -- a direct post must not
+  // be able to add an exchange while they're off.
+  if (!(await areExchangesEnabled(session.shop))) {
+    await clearExchangeSelections(returnRequest.lineItems.map((li) => li.id));
+    return redirect(`/apps/returns/r/${returnRequest.id}/shipping`);
+  }
 
   const formData = await request.formData();
   const intent = String(formData.get("intent"));

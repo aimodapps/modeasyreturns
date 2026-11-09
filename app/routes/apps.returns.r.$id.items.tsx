@@ -3,7 +3,7 @@ import { redirect } from "@remix-run/node";
 import { Form, useActionData, useLoaderData, useNavigation } from "@remix-run/react";
 import { authenticate } from "../shopify.server";
 import db from "../db.server";
-import { loadReturnRequestOrThrow } from "../lib/wizard.server";
+import { areExchangesEnabled, loadReturnRequestOrThrow } from "../lib/wizard.server";
 import { portalStyles as styles, PORTAL_ANIMATION_CSS } from "../lib/portal-styles";
 import { getPortalBranding } from "../lib/portal-branding.server";
 import { PortalLogo } from "../components/PortalLogo";
@@ -25,7 +25,8 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
   const selectedIds = formData.getAll("itemId").map(String);
 
   if (selectedIds.length === 0) {
-    return { error: "Please select at least one item to return or exchange." };
+    const word = (await areExchangesEnabled(session.shop)) ? "return or exchange" : "return";
+    return { error: `Please select at least one item to ${word}.` };
   }
 
   const selections = selectedIds.map((fulfillmentLineItemId) => {

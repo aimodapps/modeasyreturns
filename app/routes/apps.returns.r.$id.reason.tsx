@@ -3,7 +3,7 @@ import { redirect } from "@remix-run/node";
 import { Form, useActionData, useLoaderData, useNavigation } from "@remix-run/react";
 import { authenticate } from "../shopify.server";
 import db from "../db.server";
-import { loadReturnRequestOrThrow } from "../lib/wizard.server";
+import { areExchangesEnabled, loadReturnRequestOrThrow } from "../lib/wizard.server";
 import { portalStyles as styles, PORTAL_ANIMATION_CSS } from "../lib/portal-styles";
 import { getPortalBranding } from "../lib/portal-branding.server";
 import { PortalLogo } from "../components/PortalLogo";
@@ -55,7 +55,9 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     data: { reasonId: reason.id },
   });
 
-  return redirect(`/apps/returns/r/${returnRequest.id}/exchange`);
+  // With exchanges off there's nothing to choose on the exchange step.
+  const next = (await areExchangesEnabled(session.shop)) ? "exchange" : "shipping";
+  return redirect(`/apps/returns/r/${returnRequest.id}/${next}`);
 };
 
 export default function ReasonStep() {

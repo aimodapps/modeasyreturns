@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { useFetcher, useLoaderData } from "@remix-run/react";
-import { Page, Layout, Card, BlockStack, Text, TextField, Button } from "@shopify/polaris";
+import { Page, Layout, Card, BlockStack, Text, TextField, Button, Checkbox } from "@shopify/polaris";
 import { TitleBar, useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import db from "../db.server";
@@ -20,11 +20,19 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const returnPolicyUrl = String(formData.get("returnPolicyUrl") ?? "").trim() || null;
   const returnWindowDays = Number(formData.get("returnWindowDays") ?? 30);
   const orderNumberPlaceholder = String(formData.get("orderNumberPlaceholder") ?? "").trim() || null;
+  const exchangesEnabled = formData.get("exchangesEnabled") === "true";
 
   await db.shopSettings.upsert({
     where: { shopDomain: session.shop },
-    update: { supportEmail, returnPolicyUrl, returnWindowDays, orderNumberPlaceholder },
-    create: { shopDomain: session.shop, supportEmail, returnPolicyUrl, returnWindowDays, orderNumberPlaceholder },
+    update: { supportEmail, returnPolicyUrl, returnWindowDays, orderNumberPlaceholder, exchangesEnabled },
+    create: {
+      shopDomain: session.shop,
+      supportEmail,
+      returnPolicyUrl,
+      returnWindowDays,
+      orderNumberPlaceholder,
+      exchangesEnabled,
+    },
   });
 
   return { ok: true };
@@ -39,6 +47,7 @@ export default function GeneralSettings() {
   const [returnPolicyUrl, setReturnPolicyUrl] = useState(settings?.returnPolicyUrl ?? "");
   const [returnWindowDays, setReturnWindowDays] = useState(settings?.returnWindowDays?.toString() ?? "30");
   const [orderNumberPlaceholder, setOrderNumberPlaceholder] = useState(settings?.orderNumberPlaceholder ?? "");
+  const [exchangesEnabled, setExchangesEnabled] = useState(settings?.exchangesEnabled ?? false);
 
   useEffect(() => {
     if (fetcher.state === "idle" && fetcher.data?.ok) {
@@ -47,7 +56,10 @@ export default function GeneralSettings() {
   }, [fetcher.state, fetcher.data, shopify]);
 
   const save = () => {
-    fetcher.submit({ supportEmail, returnPolicyUrl, returnWindowDays, orderNumberPlaceholder }, { method: "post" });
+    fetcher.submit(
+      { supportEmail, returnPolicyUrl, returnWindowDays, orderNumberPlaceholder, exchangesEnabled: String(exchangesEnabled) },
+      { method: "post" },
+    );
   };
 
   return (
@@ -89,6 +101,25 @@ export default function GeneralSettings() {
                 onChange={setOrderNumberPlaceholder}
                 placeholder="#1001"
                 autoComplete="off"
+              />
+              <Button variant="primary" onClick={save} loading={fetcher.state === "submitting"}>
+                Save
+              </Button>
+            </BlockStack>
+          </Card>
+        </Layout.Section>
+
+        <Layout.Section>
+          <Card>
+            <BlockStack gap="400">
+              <Text as="h2" variant="headingMd">
+                Exchanges
+              </Text>
+              <Checkbox
+                label="Allow customers to request exchanges"
+                helpText="When off, the return wizard skips the exchange step and the storefront only mentions returns. Requests that already include an exchange are not affected."
+                checked={exchangesEnabled}
+                onChange={setExchangesEnabled}
               />
               <Button variant="primary" onClick={save} loading={fetcher.state === "submitting"}>
                 Save

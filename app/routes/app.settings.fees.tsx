@@ -1,19 +1,20 @@
 import { useEffect, useState } from "react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { useFetcher, useLoaderData } from "@remix-run/react";
-import { Page, Layout, Card, BlockStack, Text, TextField, Select, Button, Checkbox } from "@shopify/polaris";
+import { Page, Layout, Card, BlockStack, Text, TextField, Select, Button, Checkbox, Banner } from "@shopify/polaris";
 import { TitleBar, useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import db from "../db.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
-  const [restockingFee, labelFee, exchangeShippingFee] = await Promise.all([
+  const [restockingFee, labelFee, exchangeShippingFee, shopSettings] = await Promise.all([
     db.restockingFeeConfig.findUnique({ where: { shopDomain: session.shop } }),
     db.returnLabelFeeConfig.findUnique({ where: { shopDomain: session.shop } }),
     db.exchangeShippingFeeConfig.findUnique({ where: { shopDomain: session.shop } }),
+    db.shopSettings.findUnique({ where: { shopDomain: session.shop }, select: { exchangesEnabled: true } }),
   ]);
-  return { restockingFee, labelFee, exchangeShippingFee };
+  return { restockingFee, labelFee, exchangeShippingFee, exchangesEnabled: shopSettings?.exchangesEnabled ?? false };
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
@@ -69,7 +70,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function FeesSettings() {
-  const { restockingFee, labelFee, exchangeShippingFee } = useLoaderData<typeof loader>();
+  const { restockingFee, labelFee, exchangeShippingFee, exchangesEnabled } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const shopify = useAppBridge();
 
@@ -193,6 +194,12 @@ export default function FeesSettings() {
                 shipping fee and collected the same way (taken from a refund, or added to the balance
                 the customer owes on an exchange-only request).
               </Text>
+              {!exchangesEnabled && (
+                <Banner tone="warning">
+                  Exchanges are turned off, so this fee isn't charged on new requests. Turn exchanges on
+                  under General settings.
+                </Banner>
+              )}
               {!exchangeShippingFee && (
                 <Text as="p" tone="caution">
                   Not saved yet -- exchanges ship free until you save this.

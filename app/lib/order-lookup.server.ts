@@ -78,12 +78,13 @@ export async function performOrderLookup(
       where: { shopDomain, orderId: order.id, status: { not: "DRAFT" } },
     });
     if (existingRequestCount >= shopSettings.maxReturnsPerOrder) {
+      const word = shopSettings.exchangesEnabled ? "return or exchange" : "return";
       return {
         eligible: false,
         error:
           existingRequestCount === 1
-            ? "A return or exchange request has already been submitted for this order. Please contact us if you need further assistance."
-            : "This order has already reached the maximum number of return or exchange requests allowed. Please contact us if you need further assistance.",
+            ? `A ${word} request has already been submitted for this order. Please contact us if you need further assistance.`
+            : `This order has already reached the maximum number of ${word} requests allowed. Please contact us if you need further assistance.`,
       };
     }
   }

@@ -14,3 +14,21 @@ export async function loadReturnRequestOrThrow(id: string, shopDomain: string) {
     orderSnapshot: returnRequest.orderSnapshot as unknown as OrderSnapshot,
   };
 }
+
+/** Whether the shop currently lets customers choose an exchange. Off unless explicitly turned on in General settings. */
+export async function areExchangesEnabled(shopDomain: string): Promise<boolean> {
+  const settings = await db.shopSettings.findUnique({
+    where: { shopDomain },
+    select: { exchangesEnabled: true },
+  });
+  return settings?.exchangesEnabled ?? false;
+}
+
+/**
+ * Drops exchange choices a customer made before exchanges were turned off, so
+ * a draft that was already in progress can't still submit one.
+ */
+export async function clearExchangeSelections(lineItemIds: string[]): Promise<void> {
+  if (lineItemIds.length === 0) return;
+  await db.exchangeSelection.deleteMany({ where: { returnRequestLineItemId: { in: lineItemIds } } });
+}

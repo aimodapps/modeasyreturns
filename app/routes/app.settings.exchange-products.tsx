@@ -12,6 +12,7 @@ import {
   TextField,
   Thumbnail,
   Box,
+  Banner,
 } from "@shopify/polaris";
 import { TitleBar } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
@@ -23,6 +24,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   const url = new URL(request.url);
   const query = url.searchParams.get("q") ?? "";
+
+  const exchangeSettings = await db.shopSettings.findUnique({
+    where: { shopDomain: session.shop },
+    select: { exchangesEnabled: true },
+  });
 
   const [picks, searchResults] = await Promise.all([
     db.exchangeUpsellProduct.findMany({
@@ -42,7 +48,12 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     product: pickedProducts.find((p) => p.id === pick.shopifyProductId) ?? null,
   }));
 
-  return { picksWithData, searchResults, query };
+  return {
+    picksWithData,
+    searchResults,
+    query,
+    exchangesEnabled: exchangeSettings?.exchangesEnabled ?? false,
+  };
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
@@ -74,7 +85,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function ExchangeProductsSettings() {
-  const { picksWithData, searchResults, query } = useLoaderData<typeof loader>();
+  const { picksWithData, searchResults, query, exchangesEnabled } = useLoaderData<typeof loader>();
   const navigation = useNavigation();
   const isSearching = navigation.state === "loading";
   const pickedIds = new Set(picksWithData.map((p) => p.shopifyProductId));
@@ -84,6 +95,14 @@ export default function ExchangeProductsSettings() {
     <Page>
       <TitleBar title="Exchange upsell products" />
       <Layout>
+        {!exchangesEnabled && (
+          <Layout.Section>
+            <Banner tone="warning">
+              Exchanges are turned off, so customers won't see these suggestions. Turn them on under
+              General settings.
+            </Banner>
+          </Layout.Section>
+        )}
         <Layout.Section>
           <Card>
             <BlockStack gap="400">

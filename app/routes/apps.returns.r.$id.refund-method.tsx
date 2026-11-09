@@ -3,7 +3,7 @@ import { redirect } from "@remix-run/node";
 import { Form, useActionData, useLoaderData, useNavigation } from "@remix-run/react";
 import { authenticate } from "../shopify.server";
 import db from "../db.server";
-import { loadReturnRequestOrThrow } from "../lib/wizard.server";
+import { areExchangesEnabled, clearExchangeSelections, loadReturnRequestOrThrow } from "../lib/wizard.server";
 import { portalStyles as styles, PORTAL_ANIMATION_CSS } from "../lib/portal-styles";
 import { getPortalBranding } from "../lib/portal-branding.server";
 import { PortalLogo } from "../components/PortalLogo";
@@ -40,14 +40,21 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     throw redirect(`/apps/returns/r/${returnRequest.id}/shipping`);
   }
 
-  const hasRefundableItems = await requestHasRefundableItems(returnRequest.lineItems.map((li) => li.id));
+  const lineItemIds = returnRequest.lineItems.map((li) => li.id);
+  if (!(await areExchangesEnabled(session.shop))) {
+    await clearExchangeSelections(lineItemIds);
+  }
+  const hasRefundableItems = await requestHasRefundableItems(lineItemIds);
   if (!hasRefundableItems) {
     // Nothing to refund (fully exchanged) -- asking would be meaningless.
     throw redirect(`/apps/returns/r/${returnRequest.id}/summary`);
   }
 
-  const branding = await getPortalBranding(session.shop);
-  return { returnRequest, branding };
+  const [branding, exchangeCount] = await Promise.all([
+    getPortalBranding(session.shop),
+    db.exchangeSelection.count({ where: { returnRequestLineItemId: { in: lineItemIds } } }),
+  ]);
+  return { returnRequest, branding, hasExchange: exchangeCount > 0 };
 };
 
 export const action = async ({ request, params }: ActionFunctionArgs) => {
@@ -70,7 +77,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 };
 
 export default function RefundMethodStep() {
-  const { returnRequest, branding } = useLoaderData<typeof loader>();
+  const { returnRequest, branding, hasExchange } = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   const navigation = useNavigation();
   const isSubmitting = navigation.state === "submitting";
@@ -83,7 +90,9 @@ export default function RefundMethodStep() {
         <p style={styles.breadcrumb}>Order {returnRequest.orderName}</p>
         <h1 style={styles.heading}>How would you like to be refunded?</h1>
         <p style={styles.subheading}>
-          This applies to the portion of your return that isn't being exchanged for another item.
+          {hasExchange
+            ? "This applies to the portion of your return that isn't being exchanged for another item."
+            : "Choose where we should send your refund."}
         </p>
 
         <Form method="post" action={`/apps/returns/r/${returnRequest.id}/refund-method`} style={styles.form}>

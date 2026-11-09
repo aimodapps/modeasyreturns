@@ -11,6 +11,7 @@ import {
 } from "../lib/order-lookup.server";
 import { portalStyles as styles, PORTAL_ANIMATION_CSS } from "../lib/portal-styles";
 import { getPortalBranding } from "../lib/portal-branding.server";
+import { areExchangesEnabled } from "../lib/wizard.server";
 import { PortalLogo } from "../components/PortalLogo";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -22,8 +23,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   try {
     const { session } = await authenticate.public.appProxy(request);
-    const branding = session ? await getPortalBranding(session.shop) : null;
-    return { prefillOrderNumber, branding };
+    const [branding, exchangesEnabled] = session
+      ? await Promise.all([getPortalBranding(session.shop), areExchangesEnabled(session.shop)])
+      : [null, false];
+    return { prefillOrderNumber, branding, exchangesEnabled };
   } catch (error) {
     if (error instanceof Response) throw error;
     // This route is a full-page server-rendered POST (no client JS
@@ -34,7 +37,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     // action itself succeeded -- degrade to default branding instead so a
     // transient branding-lookup hiccup never takes down order lookup itself.
     console.error("[apps.returns] loader failed", error);
-    return { prefillOrderNumber, branding: null };
+    return { prefillOrderNumber, branding: null, exchangesEnabled: false };
   }
 };
 
@@ -104,7 +107,8 @@ async function handleAction(request: Request) {
 }
 
 export default function ReturnsPortal() {
-  const { prefillOrderNumber, branding } = useLoaderData<typeof loader>();
+  const { prefillOrderNumber, branding, exchangesEnabled } = useLoaderData<typeof loader>();
+  const returnWord = exchangesEnabled ? "return or exchange" : "return";
   const actionData = useActionData<typeof action>();
   const navigation = useNavigation();
   const isSubmitting = navigation.state === "submitting";
@@ -114,7 +118,7 @@ export default function ReturnsPortal() {
       <style>{PORTAL_ANIMATION_CSS}</style>
       <div style={styles.card} className="portal-card">
         <PortalLogo logoUrl={branding?.logoUrl ?? null} logoWidthPx={branding?.logoWidthPx ?? null} />
-        <h1 style={styles.heading}>{branding?.pageTitle || "Start a return or exchange"}</h1>
+        <h1 style={styles.heading}>{branding?.pageTitle || `Start a ${returnWord}`}</h1>
         {branding?.introDescription ? (
           <p style={styles.subheading} dangerouslySetInnerHTML={{ __html: branding.introDescription }} />
         ) : (
@@ -155,7 +159,7 @@ export default function ReturnsPortal() {
         )}
 
         <p style={{ fontSize: 13, color: "#6b6b6b", marginTop: 24, textAlign: "center" }}>
-          Already started a return or exchange?{" "}
+          Already started a {returnWord}?{" "}
           <a href="/apps/returns/status" style={{ color: "#1a1a1a" }}>
             Check its status
           </a>

@@ -44,6 +44,11 @@ model ShopSettings {
   // can still return several items together in one request). Null means
   // unlimited.
   maxReturnsPerOrder Int?
+  // Whether customers can choose an exchange (a replacement item) in the
+  // return wizard. Off means returns only: the exchange step is skipped and
+  // the storefront wording drops "exchange". Existing requests that already
+  // include an exchange are unaffected. Defaults to off.
+  exchangesEnabled   Boolean  @default(false)
   // Shown as the storefront order-number field's placeholder text, e.g.
   // "#MOD0001" -- purely cosmetic, doesn't affect order lookup itself.
   orderNumberPlaceholder String?
