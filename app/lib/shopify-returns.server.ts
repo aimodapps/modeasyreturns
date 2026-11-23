@@ -378,12 +378,10 @@ export async function createShopifyRefund(
   admin: AdminApiContext,
   {
     orderId,
-    lineItems,
     totalAmount,
     idempotencyKey,
   }: {
     orderId: string;
-    lineItems: Array<{ shopifyLineItemId: string; quantity: number }>;
     totalAmount: string;
     idempotencyKey: string;
   },
@@ -410,18 +408,12 @@ export async function createShopifyRefund(
       input: {
         orderId,
         notify: true,
-        // NO_RESTOCK -- the physical item was already restocked moments
-        // earlier via processShopifyReturn's RESTOCKED disposition on the
-        // Return itself. Restocking again here would double-count
-        // inventory, and Shopify's default restockType (effectively CANCEL,
-        // meant for unfulfilled items) rejects an already-fulfilled,
-        // already-returned line item with a misleading "cannot refund more
-        // items than were purchased" error.
-        refundLineItems: lineItems.map((li) => ({
-          lineItemId: li.shopifyLineItemId,
-          quantity: li.quantity,
-          restockType: "NO_RESTOCK",
-        })),
+        // Deliberately no refundLineItems. Processing the return
+        // (returnProcess) already made Shopify record the returned items as
+        // refunded line items -- with no money attached -- and leave the
+        // amount as a balance owed to the customer. Listing the items again
+        // here is what Shopify rejected with "cannot refund more items than
+        // were purchased"; this refund only pays out that balance.
         transactions: [
           {
             orderId,
@@ -623,4 +615,34 @@ export async function updateOrderShippingPhone(
     return { ok: false, error: "Shopify did not confirm the order's shipping address was updated." };
   }
   return { ok: true };
+}
+
+const RETURN_SHIPPING_FEES_QUERY = `#graphql
+  query ReturnShippingFees($returnId: ID!) {
+    return(id: $returnId) {
+      returnShippingFees {
+        amountSet {
+          shopMoney {
+            amount
+          }
+        }
+      }
+    }
+  }
+`;
+
+/**
+ * The fee Shopify actually holds on the Return. It's fixed when the return is
+ * created, so it can be higher than this app's current fee if staff waived a
+ * fee after approval. Returns null if it can't be read.
+ */
+export async function getReturnShippingFeeTotal(
+  admin: AdminApiContext,
+  { returnId }: { returnId: string },
+): Promise<number | null> {
+  const response = await admin.graphql(RETURN_SHIPPING_FEES_QUERY, { variables: { returnId } });
+  const json: any = await response.json();
+  const fees = json?.data?.return?.returnShippingFees;
+  if (!Array.isArray(fees)) return null;
+  return fees.reduce((sum: number, fee: any) => sum + Number(fee?.amountSet?.shopMoney?.amount ?? 0), 0);
 }

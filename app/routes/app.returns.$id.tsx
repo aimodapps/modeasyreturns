@@ -37,7 +37,9 @@ import {
   getOrderCustomerId,
   creditStoreCredit,
   updateOrderShippingPhone,
+  getReturnShippingFeeTotal,
 } from "../lib/shopify-returns.server";
+import { computeRefundSettlement } from "../lib/refund-settlement";
 import { getReturnPhotoUrls } from "../lib/photo-upload.server";
 import {
   sendReturnApprovedEmail,
@@ -252,40 +254,78 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         await computeReturnRefundBreakdown(returnRequest);
       const currencyCode = returnRequest.lineItems[0]?.currencyCode ?? "USD";
 
-      // Only plain-return items get a manual refund here -- exchanged items'
-      // value is netted natively by Shopify into the order's own balance
-      // (read back below via getOrderOutstandingBalance), not computed by us.
+      // This app's own figure for the plain-return items: what they'd refund
+      // at the paid price (naive) and after discount reallocation.
       const plainReturnItems = returnRequest.lineItems.filter(
         (li) => !li.exchangeSelection,
       );
-      let refundOnlyCents = 0;
-      const refundLineItems: Array<{
-        shopifyLineItemId: string;
-        quantity: number;
-      }> = [];
+      const hasExchangeItems =
+        plainReturnItems.length < returnRequest.lineItems.length;
+      let naiveCents = 0;
+      let recalculatedCents = 0;
       for (const li of plainReturnItems) {
-        const recalculated =
-          byLineItemId.get(li.id)?.recalculatedRefund ??
-          Number(li.unitPrice) * li.quantity;
-        refundOnlyCents += Math.round(recalculated * 100);
-        refundLineItems.push({
-          shopifyLineItemId: li.shopifyLineItemId,
-          quantity: li.quantity,
-        });
+        const naive = Number(li.unitPrice) * li.quantity;
+        naiveCents += Math.round(naive * 100);
+        recalculatedCents += Math.round(
+          (byLineItemId.get(li.id)?.recalculatedRefund ?? naive) * 100,
+        );
       }
-
-      const feeCents = Math.round(
+      const appFeeCents = Math.round(
         (Number(returnRequest.shippingFeeAmount ?? 0) +
           Number(returnRequest.exchangeShippingFeeAmount ?? 0)) *
           100,
       );
-      // The fee only comes out of a refund we're actually issuing -- an
-      // exchange-only fee is expected to already be netted by Shopify via the
-      // returnShippingFee we set at approval time.
-      const netRefundCents =
+      const appNetRefundCents =
         plainReturnItems.length > 0
-          ? Math.max(0, refundOnlyCents - feeCents)
+          ? Math.max(0, recalculatedCents - appFeeCents)
           : 0;
+
+      // Processing the return made Shopify remove the returned items from the
+      // order and net the fee, leaving what's owed as the order's balance.
+      // Refund from that (it includes tax; our item maths doesn't).
+      let balance: { amount: number; currencyCode: string } | null = null;
+      let shopifyFeeCents: number | null = null;
+      try {
+        balance = await getOrderOutstandingBalance(admin, {
+          orderId: returnRequest.orderId,
+        });
+        const shopifyFee = await getReturnShippingFeeTotal(admin, {
+          returnId: returnRequest.shopifyReturnId,
+        });
+        shopifyFeeCents =
+          shopifyFee != null ? Math.round(shopifyFee * 100) : null;
+      } catch (error) {
+        console.error(
+          "[app.returns] couldn't read the order balance after processing",
+          error,
+        );
+      }
+      const outstandingCents = balance ? Math.round(balance.amount * 100) : null;
+      const waivedAfterApprovalCents =
+        shopifyFeeCents != null ? Math.max(0, shopifyFeeCents - appFeeCents) : 0;
+
+      // Shopify shows nothing owed although we expect a refund -- its balance
+      // hasn't caught up, or the order was already refunded by hand. Stop
+      // rather than close the request with nothing paid out.
+      if (outstandingCents === 0 && appNetRefundCents > 0 && !hasExchangeItems) {
+        const message = `Shopify shows no balance owed to the customer on this order, but a refund of about ${(appNetRefundCents / 100).toFixed(2)} ${currencyCode} was expected. If the order was already refunded in Shopify, use "Mark as completed" below. Otherwise wait a moment and click "Mark received & inspected" again.`;
+        await db.returnRequest.update({
+          where: { id: returnRequest.id },
+          data: {
+            receivedAt: returnRequest.receivedAt ?? new Date(),
+            adminNote: message,
+          },
+        });
+        return { ok: false, error: message };
+      }
+
+      const { refundCents: netRefundCents, balanceDueCents } =
+        computeRefundSettlement({
+          outstandingCents,
+          appNetRefundCents,
+          reallocationAdjustmentCents: naiveCents - recalculatedCents,
+          waivedAfterApprovalCents,
+        });
 
       let refundId: string | null = null;
       let refundMethodNote: string | null = null;
@@ -307,6 +347,10 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
             });
             if (creditResult.ok) {
               storeCreditIssued = true;
+              // Store credit is issued to the customer's account, not as a
+              // refund on the order, so Shopify keeps showing the amount as
+              // owed there. Say so, or it looks unpaid and gets paid twice.
+              refundMethodNote = `Refunded ${(netRefundCents / 100).toFixed(2)} ${currencyCode} as store credit. The order in Shopify will still show this amount as owed to the customer -- do not refund it again there.`;
             } else {
               refundMethodNote = `Store credit issuance failed (${creditResult.error}) -- refunded to the original payment method instead.`;
             }
@@ -316,15 +360,17 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         if (!storeCreditIssued) {
           const refundResult = await createShopifyRefund(admin, {
             orderId: returnRequest.orderId,
-            lineItems: refundLineItems,
             totalAmount: (netRefundCents / 100).toFixed(2),
-            idempotencyKey: `${returnRequest.id}-refund`,
+            // "-v2": earlier attempts under the old key sent a different
+            // (rejected) payload, and an idempotency key must not be reused
+            // with different contents.
+            idempotencyKey: `${returnRequest.id}-refund-v2`,
           });
           if (!refundResult.ok) {
             await db.returnRequest.update({
               where: { id: returnRequest.id },
               data: {
-                receivedAt: new Date(),
+                receivedAt: returnRequest.receivedAt ?? new Date(),
                 adminNote: `Return marked received, but the refund failed: ${refundResult.error}. Process it manually from the order.`,
               },
             });
@@ -337,15 +383,22 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         }
       }
 
-      const balance = await getOrderOutstandingBalance(admin, {
-        orderId: returnRequest.orderId,
-      });
-      const balanceDue = balance && balance.amount > 0.005 ? balance : null;
+      if (netRefundCents > 0 && waivedAfterApprovalCents > 0) {
+        const waivedNote = `A fee of ${(waivedAfterApprovalCents / 100).toFixed(2)} ${currencyCode} was waived after approval and has been refunded. Shopify recorded that fee when the return was approved, so the order there may show it as a balance due -- it can be ignored.`;
+        refundMethodNote = refundMethodNote
+          ? `${refundMethodNote} ${waivedNote}`
+          : waivedNote;
+      }
+
+      const balanceDue =
+        balanceDueCents > 0 && balance
+          ? { amount: balanceDueCents / 100, currencyCode: balance.currencyCode }
+          : null;
 
       await db.returnRequest.update({
         where: { id: returnRequest.id },
         data: {
-          receivedAt: new Date(),
+          receivedAt: returnRequest.receivedAt ?? new Date(),
           lifecycleStage: balanceDue ? "BALANCE_DUE" : "COMPLETED",
           shopifyRefundId: refundId ?? returnRequest.shopifyRefundId,
           refundIssuedAmount: netRefundCents > 0 ? netRefundCents / 100 : null,
